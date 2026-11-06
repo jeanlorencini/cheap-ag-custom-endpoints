@@ -8,7 +8,7 @@ import type { Provider } from "./credentials.js";
 import { baselinePermission } from "./permissions.js";
 import { gitBash, killProcessGroup, opencodePlatform } from "./platform.js";
 import { fullRoute, modelName, routeModels, type Route } from "./routing.js";
-import { customProviderConfig, customProviderId, requireCustomEndpoint } from "./custom-endpoint.js";
+import { checkLocalEndpoint, customProviderConfig, customProviderId, requireCustomEndpoint } from "./custom-endpoint.js";
 
 const require = createRequire(import.meta.url);
 export const OPENCODE_PIN = (require("opencode-ai/package.json") as { version: string }).version;
@@ -55,7 +55,7 @@ const RESEARCH_PROMPT = `---
 description: Cheap Agent research worker. Answers questions about this repository, read-only.
 mode: primary
 ---
-You answer one question about the code in this repository. You are read-only: you can read, grep, glob and list, nothing else (no edits, no commands, no questions, no web).
+You answer one question about the code in this repository. You are read-only: use read, grep, glob and list, and simple test or Git read commands allowed by the session policy. No edits, questions or web. Run commands individually, never compound shell chains; do not rewrite denied commands to evade policy.
 - Answer from the code itself, never from memory. Cite what you state as path:line or path:start-end, paths relative to the repository root.
 - Stay within the scope and the word limit you are given.
 - End your last message with exactly one fenced block:
@@ -201,8 +201,10 @@ export async function runningOpencode(): Promise<Opencode | undefined> {
   }
 }
 
-export function ensureOpencode(provider: Provider, projectDir = process.cwd(), route?: Route): Promise<Opencode> {
+export async function ensureOpencode(provider: Provider, projectDir = process.cwd(), route?: Route): Promise<Opencode> {
   const config = opencodeConfig(provider, route ?? fullRoute(provider.provider));
+  // Before engine startup or worktree creation, including when an engine is already cached.
+  if (provider.provider === "custom") await checkLocalEndpoint(requireCustomEndpoint());
   if (started && route && booted !== config) {
     // a reboot would kill every live session: refuse it while any job or research call holds the server
     // shortcut: one server per config would let both run; worth it only if config changes mid-session become common

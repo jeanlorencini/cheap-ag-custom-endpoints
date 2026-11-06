@@ -22,7 +22,7 @@ function setup(logins = {}) {
     const at = new Date(Date.now() - hoursAgo * HOUR).toISOString();
     writeFileSync(join(dir, "result.json"), JSON.stringify({
       format: "cheapag/1", job: id, status, landed: status === "OK", steps: "1", summary: "s", changed: [], risks: [], review: [], missing: [],
-      worktree: null, usage: { turns: 3, costUsd: 0.01 }, tests: "pass", selfFix: 0, models: { requested: "m", final: "m", escalated: false },
+      worktree: null, usage: { turns: 3, modelMessages: 2, costUsd: 0.01, costSource: "provider-reported" }, tests: "pass", selfFix: 0, models: { requested: "m", final: "m", escalated: false },
       pid, timing: { startedAt: at, endedAt: at, blockedAt },
     }));
   };
@@ -83,7 +83,7 @@ test("cheapag status says consent no longer covers the models after a preset cha
 
 test("cheapag status with no login, no jobs and no spend; outside a repository; bad arguments", () => {
   const { repo, env, status } = setup();
-  expect(status()).toBe(`cheapag ${version} provider=none (run npx cheap-agent login)\nconsent: not given; run /cheapag:allow\nrunning: none\nrecent: none\nspend: none tracked in the last 30 days\n`);
+  expect(status()).toBe(`cheapag ${version} provider=none (run npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login)\nconsent: not given; run /cheapag:allow\nrunning: none\nrecent: none\nspend: none tracked in the last 30 days\n`);
   const outside = join(repo.dir, ".git"); // inside .git, rev-parse --show-toplevel fails
   expect(status(outside)).toContain("repo: not a git repository (no jobs or consent here)\nspend: none");
   const r = spawnSync(process.execPath, [serverEntry, "status", "--x"], { cwd: repo.dir, env, encoding: "utf8" });

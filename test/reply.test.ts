@@ -51,7 +51,7 @@ test("an ambiguous step → BLOCKED with lettered options; a letter reply resume
   const blocked = await delegate();
   const job = jobOf(blocked);
   expect(blocked).toBe([
-    `BLOCKED ${job} step=1 files=0 +0/-0 turns=1 cost=$0.000`,
+    `BLOCKED ${job} step=1 files=0 +0/-0 turns=1 cost=unknown`,
     "question: login already has a per-user lockout in src/auth/lockout.ts. Rate limit should:",
     "options:",
     "  a) run before lockout (counts all attempts)",
@@ -65,7 +65,7 @@ test("an ambiguous step → BLOCKED with lettered options; a letter reply resume
   expect(existsSync(join(repo.dir, ".cheapag", "worktrees", job))).toBe(true);
 
   const done = await reply(job, "b");
-  expect(done.split("\n")[0]).toMatch(new RegExp(`^OK ${job} step=1 files=1 \\+1/-1 tests=pass turns=3 cost=\\$0\\.001$`));
+  expect(done.split("\n")[0]).toMatch(new RegExp(`^OK ${job} step=1 files=1 \\+1/-1 tests=pass turns=3 cost=unknown$`));
   expect(fake.recorded.questionReplies).toEqual([{ requestID: expect.any(String), answers: [[OPTIONS[1]]], rejected: false }]);
   // the same session carried on: one session, one prompt
   expect(fake.recorded.sessions).toHaveLength(1);
@@ -90,7 +90,7 @@ test("several questions at once: all shown numbered; a partial or unreadable rep
   const blocked = await delegate();
   const job = jobOf(blocked);
   expect(blocked).toBe([
-    `BLOCKED ${job} step=1 files=0 +0/-0 turns=0 cost=$0.000`,
+    `BLOCKED ${job} step=1 files=0 +0/-0 turns=0 cost=unknown`,
     "question 1: Rate limit should:", "options:", "  a) run before lockout", "  b) run after lockout",
     "question 2: Store counters in:", "options:", "  a) memory", "  b) redis",
     `log: .cheapag/jobs/${job}/`,
@@ -154,7 +154,7 @@ test("a worker that asks again after a reply is BLOCKED again; the next reply fi
   const { fake, delegate, reply } = await scenario([ASK, again, ...edit(2, "done")]);
   const job = jobOf(await delegate());
   const second = await reply(job, "c");
-  expect(second).toBe([`BLOCKED ${job} step=1 files=0 +0/-0 turns=0 cost=$0.000`, "question: Window length?", "options:", "  a) 1 minute", "  b) 15 minutes", `log: .cheapag/jobs/${job}/`].join("\n"));
+  expect(second).toBe([`BLOCKED ${job} step=1 files=0 +0/-0 turns=0 cost=unknown`, "question: Window length?", "options:", "  a) 1 minute", "  b) 15 minutes", `log: .cheapag/jobs/${job}/`].join("\n"));
   expect((await reply(job, "B")).split("\n")[0]).toMatch(/^OK /);
   expect(fake.recorded.questionReplies.map((r) => r.answers)).toEqual([[[OPTIONS[2]]], [["15 minutes"]]]);
 });

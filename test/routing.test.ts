@@ -43,7 +43,7 @@ test("a Go limit: aborted at once, the same session continues on the next fallba
   const started = Date.now();
   const text = await delegate();
   expect(Date.now() - started).toBeLessThan(10_000); // the hour-long retry is never waited out
-  expect(text.split("\n")[0]).toMatch(/^OK j\w{4} step=1 files=1 \+1\/-0 tests=none turns=3 cost=\$0\.000 model=opencode-go\/qwen3\.7-plus$/);
+  expect(text.split("\n")[0]).toMatch(/^OK j\w{4} step=1 files=1 \+1\/-0 tests=none turns=3 cost=unknown model=opencode-go\/qwen3\.7-plus$/);
   expect(readFileSync(join(repo.dir, "hello.txt"), "utf8")).toBe("hi\n");
   const session = fake.recorded.sessions[0].id;
   expect(fake.recorded.sessions).toHaveLength(1);
@@ -59,7 +59,7 @@ test("every allowed model capped → BUDGET with the Go window and the provider'
   const { repo, delegate, models } = await scenario({ allow: ["--zdr-only"], scripts: [[EDIT, { tool: "write" }, GO_LIMIT(reset + 600_000)], [GO_LIMIT(reset)]] });
   const text = await delegate();
   const job = text.match(/^BUDGET (j\w{4}) /)![1];
-  expect(text.split("\n")[0]).toBe(`BUDGET ${job} step=1 files=1 +1/-0 tests=none turns=1 cost=$0.000 model=opencode-go/qwen3.7-plus`);
+  expect(text.split("\n")[0]).toBe(`BUDGET ${job} step=1 files=1 +1/-0 tests=none turns=1 cost=unknown model=opencode-go/qwen3.7-plus`);
   // the earliest reset among the capped models
   expect(text).toContain(`\nreason: Go 5h window exhausted for deepseek-v4.1-flash, qwen3.7-plus (resets ~${clock(reset)})\n`);
   expect(text).toContain(`\nworktree: .cheapag/worktrees/${job}/\n`);
@@ -95,14 +95,14 @@ test("spend is recorded per model in the user-wide ledger; past a Go window's ca
   // Flash's 5h window is $16 (20% of $80): already past it, yet the model kept answering
   const { delegate, ledger } = await scenario({ scripts: [[EDIT, { usage: { cost: 0.02 } }, FINISH]], ledger: [{ model: "opencode-go/deepseek-v4.1-flash", costUsd: 16 }] });
   const text = await delegate();
-  expect(text.split("\n")[0]).toMatch(/^OK j\w{4} .* cost=\$0\.020 billing=zen$/);
+  expect(text.split("\n")[0]).toMatch(/^OK j\w{4} .* cost=unknown billing=zen$/);
   const last = JSON.parse(readFileSync(ledger, "utf8").trim().split("\n").at(-1)!);
   expect(last).toMatchObject({ model: "opencode-go/deepseek-v4.1-flash", costUsd: 0.02 });
 });
 
 test("a job well inside its windows shows no billing token", async () => {
   const { delegate } = await scenario({ scripts: [[EDIT, { usage: { cost: 0.02 } }, FINISH]] });
-  expect((await delegate()).split("\n")[0]).toMatch(/cost=\$0\.020$/);
+  expect((await delegate()).split("\n")[0]).toMatch(/cost=unknown$/);
 });
 
 test("OpenRouter out of credits (402) → BUDGET, with no fallback since every model draws on the same credit", async () => {
@@ -140,7 +140,7 @@ test("a transient retry on Go (no limit reason, a quick backoff) is not a limit:
     scripts: [[{ tool: "read" }, { retry: { message: "Overloaded", next: Date.now() + 2_000, recoverAfter: 300 } }, EDIT, { tool: "write" }, FINISH]],
   });
   const text = await delegate();
-  expect(text.split("\n")[0]).toMatch(/^OK j\w{4} step=1 .* cost=\$0\.000$/); // no model= token
+  expect(text.split("\n")[0]).toMatch(/^OK j\w{4} step=1 .* cost=unknown$/); // no model= token
   expect(fake.recorded.aborts).toEqual([]);
   expect(models()).toEqual([undefined]);
 });
@@ -221,11 +221,12 @@ test("server instructions: one hint sentence, and hard_tasks adds its rule; ever
   const [delegate, self, sonnet] = (["delegate", "self", "sonnet"] as const).map((h) => instructions(h));
   for (const text of [delegate, self, sonnet]) {
     expect(text).toContain(hint);
+    expect(text).toContain('Pass kind="feature" for new behavior or kind="fix" for bug repairs; error-handling features are not fixes.');
     expect(text.length).toBeLessThan(4096);
   }
-  expect(delegate).toContain(`${hint}\n`);
-  expect(self).toContain(`${hint} For a hard task, do it yourself instead of delegating.\n`);
-  expect(sonnet).toContain(`${hint} For a hard task, use your Agent tool with model: sonnet to implement it instead of delegating.\n`);
+  expect(delegate).not.toContain("For a hard task,");
+  expect(self).toContain("For a hard task, do it yourself instead of delegating.");
+  expect(sonnet).toContain("For a hard task, use your Agent tool with model: sonnet to implement it instead of delegating.");
 });
 
 test("a difficulty hint routes the job to its tier model: model= in the headline, the hint on the record; a step's own key wins", async () => {
@@ -269,7 +270,7 @@ test("consent covers the tier models: the CONSENT block names them; one the allo
   const server = await startServer({ cwd: repo.dir, env: { CHEAPAG_OPENCODE_URL: fake.url }, logins: { "opencode-go": "k" }, allow: ["--models", "opencode-go/deepseek-v4.1-flash"] });
   onTestFinished(server.close);
   const text = await callText(server.client, "delegate", { plan: "plan.md", steps: "1", difficulty: "hard" });
-  expect(text.split("\n")[0]).toMatch(/^OK .* cost=\$0\.000$/);
+  expect(text.split("\n")[0]).toMatch(/^OK .* cost=unknown$/);
   expect(fake.recorded.sessions[0].model).toEqual({ providerID: "opencode-go", id: "deepseek-v4.1-flash" });
 });
 

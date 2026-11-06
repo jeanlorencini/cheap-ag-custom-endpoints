@@ -4,15 +4,50 @@ import { renderBatch, renderConsent, renderJob, renderResearch, type BatchRecord
 // Golden renderings (spec D5–D7, D9). Where the D5 text conflicts with D3's written rules, D3 wins and the comment says how.
 
 const FLASH = "opencode-go/deepseek-v4.1-flash";
-const job = (r: Partial<JobRecord> & Pick<JobRecord, "job" | "status">): JobRecord => ({
+const job = (r: Omit<Partial<JobRecord>, "usage"> & Pick<JobRecord, "job" | "status"> & { usage?: Partial<JobRecord["usage"]> }): JobRecord => ({
   format: "cheapag/1", landed: false, steps: "1", summary: "", changed: [], risks: [], review: [], missing: [], worktree: null,
-  usage: { turns: 0, costUsd: 0 }, selfFix: 0, models: { requested: FLASH, final: FLASH, escalated: false }, ...r,
+  selfFix: 0, models: { requested: FLASH, final: FLASH, escalated: false }, ...r,
+  usage: { turns: 0, modelMessages: 0, costUsd: 0, costSource: "provider-reported", ...r.usage },
 });
 const block = (...lines: string[]) => lines.join("\n");
 const ch = (status: string, path: string, add: number, del = 0) => ({ status, path, add, del });
 
 // headline counts come from changed[]; D5 shows no changed: section for these, D3 renders it because it is non-empty
 const TWO_FILES = [ch("M", "src/api/login.ts", 28, 3), ch("M", "test/login.test.ts", 3)];
+
+describe("usage provenance", () => {
+  test.each([0, 0.02])("unknown cost (%s) never renders as a complete numeric price", (costUsd) => {
+    const r = job({ job: "j1", status: "OK", usage: { turns: 2, modelMessages: 5, costUsd, costSource: "unknown" } });
+    expect(r.usage).toMatchObject({ turns: 2, modelMessages: 5, costSource: "unknown" });
+    expect(renderJob(r).split("\n")[0]).toBe("OK j1 step=1 files=0 +0/-0 turns=2 cost=unknown");
+  });
+
+  test("batch total is unknown if a group or integration fix has unknown cost, even alongside reported spend", () => {
+    const b: BatchRecord = { format: "cheapag/1", batch: "b1", groups: ["1"], notes: [], integration: "none", jobs: ["j1"] };
+    const known = job({ job: "j1", status: "OK", usage: { costUsd: 0.03, costSource: "provider-reported" } });
+    const unknown = job({ job: "j2", status: "FAIL", usage: { costUsd: 0, costSource: "unknown" } });
+    for (const text of [renderBatch(b, [unknown]), renderBatch(b, [known, unknown]), renderBatch(b, [known], unknown)]) {
+      expect(text.split("\n")[0]).toContain("cost=unknown");
+      expect(text.split("\n")[0]).not.toContain("cost=$");
+    }
+    expect(renderBatch(b, [known]).split("\n")[0]).toContain("cost=$0.030");
+  });
+
+  test("successful research retains cleanup diagnostics and separates stored reproduction evidence", () => {
+    const r = {
+      format: "cheapag/1" as const, job: "r1", status: "ANSWER" as const, filesRead: 2,
+      usage: { turns: 3, modelMessages: 2, costUsd: 0, costSource: "unknown" as const },
+      answer: "Found the cause.", refs: [], unlanded: [], reproStatus: "unverified" as const,
+      repro: "npm test -- auth", reproOutcome: "runner unavailable", cleanupError: "worktree is locked", worktree: ".cheapag/worktrees/r1",
+    };
+    const text = renderResearch(r);
+    expect(text).toContain("ANSWER r1 files_read=2 turns=3 cost=unknown");
+    expect(text).toContain("repro: unverified (not run): `npm test -- auth` → runner unavailable");
+    expect(text).toContain("cleanup error: worktree is locked\nworktree: .cheapag/worktrees/r1/");
+    expect(text).toContain("notes:\nFound the cause.");
+    expect(renderResearch({ ...r, reproStatus: "not-attempted", repro: undefined, reproOutcome: undefined })).not.toContain("repro:");
+  });
+});
 
 describe("D5 status blocks", () => {
   test("found: (ticket 29) sits after error: and before tried: on FAIL, first on PARTIAL; a long note wraps at 200 chars and is never cut", () => {
@@ -274,7 +309,7 @@ describe("D7 research block", () => {
   ];
   test("ANSWER with refs, confidence and the unlanded-jobs note", () => {
     expect(renderResearch({
-      format: "cheapag/1", job: "r5k2q", status: "ANSWER", filesRead: 9, usage: { turns: 11, costUsd: 0.003 },
+      format: "cheapag/1", job: "r5k2q", status: "ANSWER", reproStatus: "not-attempted", filesRead: 9, usage: { turns: 11, modelMessages: 5, costUsd: 0.003, costSource: "provider-reported" },
       answer: answer.join("\n"), confidence: "high", unlanded: ["j6a91", "j6a92"],
       refs: [{ path: "src/middleware/auth.ts", start: 18, end: 42 }, { path: "src/app.ts", start: 31, end: 31 }, { path: "src/middleware/errors.ts", start: 12, end: 12 }],
     })).toBe(block(
@@ -289,7 +324,7 @@ describe("D7 research block", () => {
   });
   test("UNSURE on a fallback model, no note when everything landed", () => {
     expect(renderResearch({
-      format: "cheapag/1", job: "r1", status: "UNSURE", filesRead: 3, usage: { turns: 4, costUsd: 0.001 },
+      format: "cheapag/1", job: "r1", status: "UNSURE", reproStatus: "not-attempted", filesRead: 3, usage: { turns: 4, modelMessages: 2, costUsd: 0.001, costSource: "provider-reported" },
       models: { requested: "a/flash", final: "a/flash2" }, answer: "No refresh endpoint found.", refs: [], confidence: "low", unlanded: [],
     })).toBe(block(
       "UNSURE r1 files_read=3 turns=4 cost=$0.001 model=a/flash2",
@@ -301,8 +336,8 @@ describe("D7 research block", () => {
   });
   test("a scout brief with a reproduction and dead ends (ticket 23.4)", () => {
     expect(renderResearch({
-      format: "cheapag/1", job: "r3", status: "ANSWER", filesRead: 2, usage: { turns: 5, costUsd: 0.002 }, answer: "Expiry is checked after decoding.",
-      refs: [{ path: "src/auth.ts", start: 18, end: 42 }], repro: "`pytest tests/test_auth.py -k expiry` → 1 failed", deadEnds: "middleware order is fine",
+      format: "cheapag/1", job: "r3", status: "ANSWER", reproStatus: "verified", filesRead: 2, usage: { turns: 5, modelMessages: 2, costUsd: 0.002, costSource: "provider-reported" }, answer: "Expiry is checked after decoding.",
+      refs: [{ path: "src/auth.ts", start: 18, end: 42 }], repro: "pytest tests/test_auth.py -k expiry", reproOutcome: "1 failed", deadEnds: "middleware order is fine",
       confidence: "high", unlanded: [],
     })).toBe(block(
       "ANSWER r3 files_read=2 turns=5 cost=$0.002",
@@ -317,10 +352,10 @@ describe("D7 research block", () => {
   });
   test("FAIL with a reason", () => {
     expect(renderResearch({
-      format: "cheapag/1", job: "r2", status: "FAIL", filesRead: 0, usage: { turns: 0, costUsd: 0 }, answer: "", refs: [],
+      format: "cheapag/1", job: "r2", status: "FAIL", reproStatus: "not-attempted", filesRead: 0, usage: { turns: 0, modelMessages: 0, costUsd: 0, costSource: "unknown" }, answer: "", refs: [],
       reason: "worker error: upstream 500", unlanded: ["j1"],
     })).toBe(block(
-      "FAIL r2 files_read=0 turns=0 cost=$0.000",
+      "FAIL r2 files_read=0 turns=0 cost=unknown",
       "reason: worker error: upstream 500",
       "note: 1 job not yet landed (j1); their changes are not visible to research",
       "log: .cheapag/jobs/r2/",

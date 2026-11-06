@@ -9,7 +9,7 @@ const CHECK = `import { readFileSync } from "node:fs";\nprocess.exit(readFileSyn
 const REPRO = CHECK;
 const PASSES_ANYWAY = "process.exit(0);\n";
 
-async function delegate(repro: string, reproTest = REPRO) {
+async function delegate(repro: string, reproTest = REPRO, kind?: "feature" | "fix") {
   const repo = tempRepo();
   onTestFinished(repo.cleanup);
   writeFileSync(join(repo.dir, "check.mjs"), CHECK);
@@ -30,7 +30,7 @@ async function delegate(repro: string, reproTest = REPRO) {
   fake.script(...script);
   const server = await startServer({ cwd: repo.dir, env: { CHEAPAG_OPENCODE_URL: fake.url }, logins: { "opencode-go": "k" }, allow: [] });
   onTestFinished(server.close);
-  const result = await server.client.callTool({ name: "delegate", arguments: { task: "make hello 2", files: "src/hello.ts, test/", done_when: "`node check.mjs`" } });
+  const result = await server.client.callTool({ name: "delegate", arguments: { task: "make hello 2", files: "src/hello.ts, test/", done_when: "`node check.mjs`", ...(kind && { kind }) } });
   const text = (result.content as { text: string }[])[0].text;
   const job = text.match(/^\w+ (j[0-9a-z]{4}) /)![1];
   const record = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "jobs", job, "result.json"), "utf8"));
@@ -38,7 +38,7 @@ async function delegate(repro: string, reproTest = REPRO) {
 }
 
 test("a reproduction that fails without the fix and passes with it: OK repro=fail→pass, landed with the test", async () => {
-  const { repo, text, record } = await delegate("node test/hello.test.mjs");
+  const { repo, text, record } = await delegate("node test/hello.test.mjs", REPRO, "fix");
   expect(text.split("\n")[0]).toMatch(/^OK j\w+ .* repro=fail→pass test=test\/hello\.test\.mjs$/);
   expect(record.repro).toBe("fail→pass");
   expect(record.risks).toEqual([]);
@@ -67,7 +67,7 @@ test("a command outside this job's checks is never run: repro=unverified", async
 });
 
 test("a step that is not a fix: no repro token, no risk", async () => {
-  const { text, record } = await delegate("n/a");
+  const { text, record } = await delegate("n/a", REPRO, "feature");
   expect(record.repro).toBeUndefined();
   expect(text.split("\n")[0]).not.toContain("repro=");
 });

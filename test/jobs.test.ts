@@ -58,7 +58,7 @@ test("turn cap during a self-fix: aborted, last check passes → PARTIAL with mi
   const text = await delegate();
   const job = jobOf(text);
   expect(text).toBe([
-    `PARTIAL ${job} step=1 files=1 +1/-0 tests=pass turns=3 cost=$0.000 fix=1`,
+    `PARTIAL ${job} step=1 files=1 +1/-0 tests=pass turns=3 cost=unknown fix=1`,
     "summary: hello added",
     "changed:",
     "  A src/hello.ts +1",
@@ -70,7 +70,7 @@ test("turn cap during a self-fix: aborted, last check passes → PARTIAL with mi
   expect(fake.recorded.aborts).toHaveLength(1);
   expect(existsSync(join(repo.dir, "src/hello.ts"))).toBe(false); // never lands
   expect(existsSync(join(repo.dir, ".cheapag", "worktrees", job, "src/hello.ts"))).toBe(true);
-  expect(record(job)).toMatchObject({ status: "PARTIAL", landed: false, missing: ["README note not written"], verify: [{ ok: false }, { ok: true }] });
+  expect(record(job)).toMatchObject({ status: "PARTIAL", landed: false, missing: ["README note not written"], verify: [{ ok: false }, { ok: true }], usage: { costUsd: 0, costSource: "unknown" } });
 });
 
 test("turn cap with nothing changed → FAIL with the reason; no hand-over (user config, merged key by key with the repo's)", async () => {
@@ -200,13 +200,14 @@ test("minute cap during verify kills the verify process group → TIMEOUT", asyn
 });
 
 test("cost cap → session aborted → BUDGET reason: job cap", async () => {
-  const { repo, fake, delegate } = await scenario({
+  const { repo, fake, delegate, record } = await scenario({
     repoConfig: { limits: { max_cost_usd: 0.01 } },
     scripts: [[{ edit: "src/hello.ts", content: "export const hello = 2;\n" }, { tool: "write" }, { usage: { cost: 0.006 } }, { usage: { cost: 0.006 } }, LONG]],
   });
   const text = await delegate();
   const job = jobOf(text);
-  expect(text.split("\n")[0]).toBe(`BUDGET ${job} step=1 files=1 +1/-0 tests=none turns=1 cost=$0.012`);
+  expect(text.split("\n")[0]).toBe(`BUDGET ${job} step=1 files=1 +1/-0 tests=none turns=1 cost=unknown`);
+  expect(record(job).usage).toMatchObject({ costUsd: 0.012, costSource: "unknown" });
   expect(text).toContain("\nreason: job cap ($0.01) reached\n");
   expect(text).toContain(`\nworktree: .cheapag/worktrees/${job}/\n`);
   expect(fake.recorded.aborts).toHaveLength(1);
@@ -228,7 +229,8 @@ test("jobs list/show while a job runs, then cancel aborts it → CANCELLED, work
   expect(record(job)).toMatchObject({ status: "RUNNING", pid: expect.any(Number), worktree: `.cheapag/worktrees/${job}` });
 
   const cancelled = await jobs("cancel", job);
-  expect(cancelled.split("\n")[0]).toBe(`CANCELLED ${job} step=1 files=1 +1/-0 tests=none turns=1 cost=$0.000`);
+  expect(cancelled.split("\n")[0]).toBe(`CANCELLED ${job} step=1 files=1 +1/-0 tests=none turns=1 cost=unknown`);
+  expect(record(job).usage).toMatchObject({ costUsd: 0, costSource: "unknown" });
   expect(cancelled).toContain("\nreason: cancelled on request\n");
   expect(cancelled).toContain(`\nworktree: .cheapag/worktrees/${job}/\n`);
   expect(await pending).toBe(cancelled);
@@ -337,9 +339,9 @@ test("ticket 33: a turn cap during the fixes still escalates once, on its own bu
   });
   const text = await callText(server.client, "delegate", { plan: ".plan/p.md", steps: "1" });
   const job = jobOf(text);
-  expect(text.split("\n")[0]).toBe(`OK ${job} step=1 files=1 +1/-0 tests=pass turns=5 cost=$0.000 esc=1 model=opencode-go/deepseek-v4-pro`);
+  expect(text.split("\n")[0]).toBe(`OK ${job} step=1 files=1 +1/-0 tests=pass turns=5 cost=unknown esc=1 model=opencode-go/deepseek-v4-pro`);
   expect(fake.recorded.prompts.some((p) => p.model?.modelID === "deepseek-v4-pro")).toBe(true);
-  expect(record(job)).toMatchObject({ status: "OK", landed: true, models: { escalated: true, final: "opencode-go/deepseek-v4-pro" } });
+  expect(record(job)).toMatchObject({ status: "OK", landed: true, models: { escalated: true, final: "opencode-go/deepseek-v4-pro" }, usage: { costUsd: 0, costSource: "unknown" } });
   expect(readFileSync(join(repo.dir, "src/hello.ts"), "utf8")).toBe("export const hello = 2;\n");
 });
 

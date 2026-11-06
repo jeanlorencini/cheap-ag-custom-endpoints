@@ -15,11 +15,13 @@ const ABORT_GRACE_MS = 10_000;
  * `disagree`: where the step's spec and the source it was given disagree, or `none` (ticket 28: a wrong spec is only visible to whoever has the source).
  */
 export type FinishReport = { summary: string; risks: string[]; review: string[]; missing: string[]; repro?: string; disagree?: string };
-export type Usage = { inputTokens: number; outputTokens: number; reasoningTokens: number; cacheRead: number; cacheWrite: number; costUsd: number };
+export type CostSource = "provider-reported" | "unknown";
+/** Numeric cost is reported spend only, not an estimate: unknown pricing must not be displayed as free. */
+export type Usage = { inputTokens: number; outputTokens: number; reasoningTokens: number; cacheRead: number; cacheWrite: number; costUsd: number; costSource: CostSource };
 /** What one prompt of a session produced; `limit` when it was aborted on a provider limit, `httpStatus` of a provider error. */
 export type RunResult = { finish?: FinishReport; text: string; error?: string; limit?: Limit; httpStatus?: number; interrupted?: boolean };
-/** Session totals so far: turns and usage accumulate across every prompt of the session; `spend` is cost per model name. */
-export type SessionTotals = { sessionID: string; turns: number; usage: Usage; rejections: Rejection[]; spend: Record<string, number> };
+/** Session totals across prompts: `turns` counts unique completed/error tool calls, `modelMessages` unique assistant responses; `spend` is reported cost per model name. */
+export type SessionTotals = { sessionID: string; turns: number; modelMessages: number; usage: Usage; rejections: Rejection[]; spend: Record<string, number> };
 /** A tool call the ruleset denied outright, or a permission request auto-rejected. */
 export type Rejection = { kind: "denied" | "asked"; permission: string; what: string };
 export type SessionResult = SessionTotals & RunResult;
@@ -121,8 +123,11 @@ export async function openSession(opts: {
           }
           messages.set(id, {
             model: `${providerID}/${modelID}`,
-            inputTokens: tokens.input, outputTokens: tokens.output, reasoningTokens: tokens.reasoning,
-            cacheRead: tokens.cache.read, cacheWrite: tokens.cache.write, costUsd: cost,
+            inputTokens: tokens?.input ?? 0, outputTokens: tokens?.output ?? 0, reasoningTokens: tokens?.reasoning ?? 0,
+            cacheRead: tokens?.cache?.read ?? 0, cacheWrite: tokens?.cache?.write ?? 0,
+            // OpenCode can emit zero without pricing, notably for custom endpoints. Zero is not proof of free usage.
+            costUsd: Number.isFinite(cost) && cost > 0 ? cost : 0,
+            costSource: Number.isFinite(cost) && cost > 0 ? "provider-reported" : "unknown",
           });
         } else if (event.type === "permission.asked") {
           // an unanswered ask blocks forever in server mode: reject every one, with a reason the worker sees
@@ -188,13 +193,14 @@ export async function openSession(opts: {
   }
 
   function totals(): SessionTotals {
-    const usage: Usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
+    const usage: Usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, costSource: messages.size ? "provider-reported" : "unknown" };
     const spend: Record<string, number> = {};
     for (const m of messages.values()) {
-      for (const key of Object.keys(usage) as (keyof Usage)[]) usage[key] += m[key];
+      for (const key of ["inputTokens", "outputTokens", "reasoningTokens", "cacheRead", "cacheWrite", "costUsd"] as const) usage[key] += m[key];
+      if (m.costSource === "unknown") usage.costSource = "unknown";
       spend[m.model] = (spend[m.model] ?? 0) + m.costUsd;
     }
-    return { sessionID, turns: calls.size, usage, rejections: [...rejections], spend };
+    return { sessionID, turns: calls.size, modelMessages: messages.size, usage, rejections: [...rejections], spend };
   }
 
   return { sessionID, run, totals };
@@ -249,8 +255,20 @@ function describeCall(input: Record<string, unknown>) {
 }
 
 function describe(err: unknown) {
-  const e = err as { name?: string; data?: { message?: string } } | undefined;
-  return e?.data?.message ?? e?.name ?? "unknown worker error";
+  const e = err as { name?: string; cause?: unknown; data?: { message?: string; cause?: unknown } } | undefined;
+  const message = e?.data?.message ?? e?.name ?? "unknown worker error";
+  const details: string[] = [];
+  // Only structured diagnostic fields: never serialize a cause, its message, URL, headers, or response body.
+  let cause = e?.cause ?? e?.data?.cause;
+  for (let depth = 0; cause && typeof cause === "object" && depth < 3; depth++) {
+    const c = cause as { code?: unknown; status?: unknown; statusCode?: unknown; name?: unknown; cause?: unknown };
+    if (typeof c.code === "string" && /^(?:E[A-Z0-9_]{1,40}|UND_ERR_[A-Z0-9_]{1,40})$/.test(c.code)) details.push(`code=${c.code}`);
+    const status = c.statusCode ?? c.status;
+    if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) details.push(`status=${status}`);
+    if (typeof c.name === "string" && ["Error", "TypeError", "SystemError", "AggregateError", "ConnectTimeoutError", "HeadersTimeoutError", "SocketError"].includes(c.name)) details.push(`name=${c.name}`);
+    cause = c.cause;
+  }
+  return details.length ? `${message} (${[...new Set(details)].join(", ")})` : message;
 }
 
 /** The HTTP status of a provider error (APIError), e.g. OpenRouter's 402 for insufficient credits. */

@@ -131,7 +131,7 @@ test("a single step runs in a worktree and lands OK, uncommitted, with the resul
   const text = await delegate("1", "keep it short");
   const job = jobOf(text);
   expect(text).toBe([
-    `OK ${job} step=1 files=2 +3/-0 tests=none turns=3 cost=$0.002`,
+    `OK ${job} step=1 files=2 +3/-0 tests=none turns=3 cost=unknown`,
     "summary: added hello constant and README note",
     "changed:",
     "  M README.md +2",
@@ -176,7 +176,7 @@ test("a single step runs in a worktree and lands OK, uncommitted, with the resul
   expect(JSON.parse(readFileSync(join(dir, "result.json"), "utf8"))).toMatchObject({
     format: "cheapag/1", job, status: "OK", landed: true, plan: ".plan/hello.md", steps: "1",
     baseline: { head: repo.git("rev-parse", "HEAD").trim() }, sessionID: session.id,
-    usage: { turns: 3, costUsd: 0.002, inputTokens: 1200, outputTokens: 50 },
+    usage: { turns: 3, costUsd: 0.002, costSource: "unknown", inputTokens: 1200, outputTokens: 50 },
   });
 });
 
@@ -305,11 +305,12 @@ test("with only an OpenRouter login, the job runs on an openrouter model and lan
     { openrouter: "sk-or-v1-testkeytestkeytestkey" },
   );
   const text = await delegate("1");
-  expect(text).toMatch(/^OK j[0-9a-z]{4} step=1 files=1 \+1\/-0 tests=none turns=2 cost=\$0\.000\n/);
+  expect(text).toMatch(/^OK j[0-9a-z]{4} step=1 files=1 \+1\/-0 tests=none turns=2 cost=unknown\n/);
   expect(fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "deepseek/deepseek-v4.1-flash" });
   expect(readFileSync(join(repo.dir, "src/hello.ts"), "utf8")).toBe("export const hello = 1;\n");
   expect(JSON.parse(readFileSync(join(repo.dir, ".cheapag", "jobs", jobOf(text), "result.json"), "utf8"))).toMatchObject({
     provider: "openrouter", models: { requested: "openrouter/deepseek/deepseek-v4.1-flash" },
+    usage: { costUsd: 0.0004, costSource: "unknown" },
   });
 });
 

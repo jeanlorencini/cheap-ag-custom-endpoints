@@ -12,6 +12,7 @@ import { callText, slow, startServer } from "./harness.js";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string; dependencies: Record<string, string> };
 const PIN = pkg.dependencies["opencode-ai"];
+const IDENTITY = "\nruntime=cheap-ag-custom-endpoints capabilities=custom-endpoint,task-kind engine=healthy model-api=not-checked";
 
 /** Just enough of OpenCode to answer the startup health check. */
 async function fakeHealth(version: string, status = 200) {
@@ -68,7 +69,7 @@ test.each([
   ["env keys without a login are ignored", {}, null],
 ] as const)("credentials from saved logins only: %s", async (_, logins, expected) => {
   const text = await pingWith({ OPENCODE_GO_API_KEY: "g", OPENROUTER_API_KEY: "o", DEEPSEEK_API_KEY: "d", CHEAPAG_OPENCODE_URL: await fakeHealth(PIN) }, logins);
-  expect(text).toBe(expected ? `OK cheapag ${pkg.version} opencode=${PIN} ${expected}` : "FAIL reason: no worker provider; run npx cheap-agent login");
+  expect(text).toBe(expected ? `OK cheapag ${pkg.version} opencode=${PIN} ${expected}${IDENTITY}` : "FAIL reason: no worker provider; run npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login");
 });
 
 test("ping names the preset the user's config picks, or custom when it matches none", async () => {
@@ -77,9 +78,9 @@ test("ping names the preset the user's config picks, or custom when it matches n
   const dir = join(server.home, "config", "cheapag");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "config.json"), JSON.stringify({ models: PRESETS.openrouter.strongest }));
-  expect(await callText(server.client, "ping")).toBe(`OK cheapag ${pkg.version} opencode=${PIN} provider=openrouter via=login preset=strongest`);
+  expect(await callText(server.client, "ping")).toBe(`OK cheapag ${pkg.version} opencode=${PIN} provider=openrouter via=login preset=strongest${IDENTITY}`);
   writeFileSync(join(dir, "config.json"), JSON.stringify({ models: { implement: "openrouter/qwen/qwen3.7-plus" } }));
-  expect(await callText(server.client, "ping")).toMatch(/ via=login preset=custom$/);
+  expect(await callText(server.client, "ping")).toContain(` via=login preset=custom${IDENTITY}`);
 });
 
 test("refuses with FAIL when the OpenCode server reports a different version", async () => {
@@ -167,7 +168,7 @@ test("boots the bundled OpenCode lazily on localhost, restarts it after a crash,
 
   expect(children(server.pid)).toEqual([]); // nothing started until first use
   const text = await callText(server.client, "ping");
-  expect(text).toBe(`OK cheapag ${pkg.version} opencode=${PIN} provider=opencode-go via=login preset=balanced`);
+  expect(text).toBe(`OK cheapag ${pkg.version} opencode=${PIN} provider=opencode-go via=login preset=balanced${IDENTITY}`);
 
   const [opencodePid] = children(server.pid);
   if (process.platform !== "win32") {

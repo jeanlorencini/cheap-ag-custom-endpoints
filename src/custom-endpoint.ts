@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { createConnection } from "node:net";
 import { userConfigFile } from "./config.js";
 
 export type CustomEndpoint = { baseURL: string; model: string };
@@ -53,6 +54,25 @@ export function requireCustomEndpoint(): CustomEndpoint {
   const config = customEndpoint();
   if (!config) throw new Error("Configure a custom endpoint with cheapag login first.");
   return config;
+}
+
+/** Transport only: no model request, credential, HTTP body, or claim of API health. Checked on every job. */
+export async function checkLocalEndpoint(endpoint: CustomEndpoint): Promise<"tcp-reachable" | "not-checked"> {
+  const url = new URL(normalizeEndpoint(endpoint.baseURL));
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (host !== "localhost" && host !== "::1" && !/^127\./.test(host)) return "not-checked";
+  const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+  await new Promise<void>((resolve, reject) => {
+    const socket = createConnection({ host, port });
+    const fail = (code: string) => {
+      socket.destroy();
+      reject(new Error(`custom endpoint loopback transport unavailable (${code}); check the local relay listener and configured port; no model request was sent`));
+    };
+    socket.setTimeout(1_500, () => fail("ETIMEDOUT"));
+    socket.once("error", (err: NodeJS.ErrnoException) => fail(err.code ?? "CONNECTION_FAILED"));
+    socket.once("connect", () => { socket.destroy(); resolve(); });
+  });
+  return "tcp-reachable";
 }
 
 export function selectProvider(provider: string) {

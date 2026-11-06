@@ -60,14 +60,15 @@ async function scenario(scripts: Action[][], doneWhen = "`node check.mjs` passes
 
 test("verify passes first time: OK, tests=pass, landed, no fix", async () => {
   const { repo, text, record } = await scenario([RIGHT("set hello to 2")]);
-  expect(text.split("\n")[0]).toMatch(/^OK j[0-9a-z]{4} step=1 files=1 \+1\/-1 tests=pass turns=2 cost=\$0\.001$/);
+  expect(text.split("\n")[0]).toMatch(/^OK j[0-9a-z]{4} step=1 files=1 \+1\/-1 tests=pass turns=2 cost=unknown$/);
   expect(readFileSync(join(repo.dir, "src/hello.ts"), "utf8")).toBe("export const hello = 2;\n");
   expect(record).toMatchObject({ status: "OK", landed: true, selfFix: 0, verify: [{ cmd: "node check.mjs", ok: true }], tried: [] });
+  expect(record.usage).toMatchObject({ costUsd: 0.001, costSource: "unknown" });
 });
 
 test("verify passes after a self-fix in the same session: OK fix=1, landed", async () => {
   const { repo, fake, text, record, prompts } = await scenario([WRONG("set hello to 1"), RIGHT("corrected hello to 2")]);
-  expect(text.split("\n")[0]).toMatch(/^OK j[0-9a-z]{4} step=1 files=1 \+1\/-1 tests=pass turns=4 cost=\$0\.002 fix=1$/);
+  expect(text.split("\n")[0]).toMatch(/^OK j[0-9a-z]{4} step=1 files=1 \+1\/-1 tests=pass turns=4 cost=unknown fix=1$/);
   expect(text).toContain("\nsummary: corrected hello to 2\n");
   expect(readFileSync(join(repo.dir, "src/hello.ts"), "utf8")).toBe("export const hello = 2;\n");
   // the fix went to the same session, on the same model, with the error tail
@@ -76,12 +77,13 @@ test("verify passes after a self-fix in the same session: OK fix=1, landed", asy
   expect(prompts[1].model).toBeUndefined();
   expect(prompts[1].text).toMatch(/^Verification failed\. Fix the cause, then call finish again\.\n\n`node check\.mjs`\n  ✗ hello › equals 2\n/);
   expect(record).toMatchObject({ selfFix: 1, tried: ["fix 1: corrected hello to 2 → passed"], verify: [{ ok: false }, { ok: true }] });
+  expect(record.usage).toMatchObject({ costUsd: 0.002, costSource: "unknown" });
 });
 
 test("still failing after 2 self-fixes and the escalation: FAIL with error, tried, review and worktree; nothing lands", async () => {
   const { repo, text, job, record, prompts } = await scenario([WRONG("first try"), WRONG("second try"), WRONG("third try"), WRONG("stronger try")]);
   expect(text).toBe([
-    `FAIL ${job} step=1 files=1 +1/-1 tests=fail turns=8 cost=$0.004 fix=2 esc=1 model=opencode-go/deepseek-v4-pro`,
+    `FAIL ${job} step=1 files=1 +1/-1 tests=fail turns=8 cost=unknown fix=2 esc=1 model=opencode-go/deepseek-v4-pro`,
     "summary: stronger try",
     "changed:",
     "  M src/hello.ts +1 -1",
@@ -105,6 +107,7 @@ test("still failing after 2 self-fixes and the escalation: FAIL with error, trie
   expect(existsSync(join(repo.dir, ".cheapag", "worktrees", job))).toBe(true);
   expect(record).toMatchObject({
     status: "FAIL", landed: false, selfFix: 2, tests: "fail",
+    usage: { costUsd: 0.004, costSource: "unknown" },
     models: { requested: "opencode-go/deepseek-v4.1-flash", final: "opencode-go/deepseek-v4-pro", escalated: true },
   });
   expect(record.verify).toHaveLength(4);

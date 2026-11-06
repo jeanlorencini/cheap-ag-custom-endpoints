@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
-import { BRIEF_FORMAT, REPRO_RULE, refTokens } from "../src/research.js";
+import * as consent from "../src/consent.js";
+import * as opencode from "../src/opencode.js";
+import * as routing from "../src/routing.js";
+import * as worker from "../src/worker.js";
+import * as workspace from "../src/workspace.js";
+import { BRIEF_FORMAT, REPRO_RULE, parseAnswer, refTokens, research as runResearch, verifyRepro } from "../src/research.js";
 import { startFakeOpencode, type Action } from "./fake-opencode.js";
 import { callText, removeDir, slow, startServer, tempRepo, type Logins } from "./harness.js";
 
@@ -39,6 +44,118 @@ test("the ref parser accepts Windows drive-letter and backslash paths, and POSIX
   ]);
 });
 
+test.each([undefined, "", "not attempted", "none"])("absent reproduction %s has no executable command", (repro) => {
+  const answer = parseAnswer(block(`status: answer\nconfidence: high\n${repro === undefined ? "" : `repro: ${repro}\n`}notes: read only`).text, ".", [], 200);
+  expect(verifyRepro(answer, [])).toMatchObject({ reproStatus: "not-attempted", confidence: "high" });
+  expect(verifyRepro(answer, [])?.repro).toBeUndefined();
+  expect(verifyRepro(answer, [])?.reproOutcome).toBeUndefined();
+});
+
+test.each([
+  ["pytest tests/auth.py && pytest tests/expiry.py", "pytest tests/auth.py"],
+  ["pytest tests/auth.py", "pytest tests/auth.py && pytest tests/expiry.py"],
+  ["pytest tests/auth.py -k expiry", "pytest tests/auth.py"],
+])("reproduction claim %s must exactly match executed %s", (claimed, executed) => {
+  const answer = parseAnswer(block(`status: answer\nconfidence: high\nrepro: \`${claimed}\` → 1 failed\nnotes: failure`).text, ".", [], 200);
+  expect(verifyRepro(answer, [executed])).toMatchObject({ repro: claimed, reproOutcome: "1 failed", reproStatus: "unverified", confidence: "low" });
+});
+
+test("reproduction verification normalizes whitespace, keeping command and outcome separate", () => {
+  const answer = parseAnswer(block("status: answer\nconfidence: high\nrepro: `pytest  tests/auth.py` → 1 failed\nnotes: failure").text, ".", [], 200);
+  expect(verifyRepro(answer, ["  pytest\t tests/auth.py \n"])).toMatchObject({ repro: "pytest tests/auth.py", reproOutcome: "1 failed", reproStatus: "verified", confidence: "high" });
+});
+
+test("unstructured reproduction prose is retained as an outcome, never an executable command", () => {
+  const answer = parseAnswer(block("status: answer\nconfidence: high\nrepro: tests failed, probably\nnotes: failure").text, ".", [], 200);
+  const verified = verifyRepro(answer, ["pytest"]);
+  expect(verified).toMatchObject({ reproStatus: "unverified", reproOutcome: "tests failed, probably", confidence: "low" });
+  expect(verified?.repro).toBeUndefined();
+});
+
+test.each([
+  ["FAIL", "release"], ["FAIL", "remove"], ["ANSWER", "release"], ["ANSWER", "remove"],
+] as const)("%s terminal records survive EBUSY during worktree %s", async (status, phase) => {
+  const repo = tempRepo();
+  onTestFinished(repo.cleanup);
+  onTestFinished(() => { vi.restoreAllMocks(); });
+  vi.spyOn(workspace, "projectRoot").mockReturnValue(repo.dir);
+  vi.spyOn(consent, "consentGate").mockReturnValue({ route: routing.fullRoute("opencode-go") });
+  vi.spyOn(routing, "recordSpend").mockImplementation(() => {});
+  const releaseHold = vi.fn();
+  vi.spyOn(opencode, "holdOpencode").mockReturnValue(releaseHold);
+  const usage = { costUsd: 0, costSource: "unknown" as const, inputTokens: 12, outputTokens: 3, reasoningTokens: 2, cacheRead: 4, cacheWrite: 5 };
+  vi.spyOn(worker, "openSession").mockResolvedValue({
+    sessionID: "research-fault",
+    run: async () => status === "FAIL" ? { text: "", error: "API rejected request (400)" } : block("status: answer\nconfidence: high\nnotes: useful answer"),
+    totals: () => ({ sessionID: "research-fault", turns: 0, usage, modelMessages: 1, rejections: [], spend: {} }),
+  });
+  let id = "";
+  const checkRecords = (path: string) => {
+    id = path.split(/[\\/]/).at(-1)!;
+    const dir = join(repo.dir, ".cheapag", "jobs", id);
+    const record = JSON.parse(readFileSync(join(dir, "research.json"), "utf8"));
+    expect(record.status).toBe(status);
+    expect(record.cleanupError).toBeUndefined();
+    expect(readFileSync(join(dir, "result.txt"), "utf8")).toMatch(new RegExp(`^${status} ${id} `));
+    expect(releaseHold).not.toHaveBeenCalled();
+  };
+  const busy = Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+  const releaseDirectory = vi.spyOn(worker, "releaseDirectory").mockImplementation(async (path) => {
+    checkRecords(path);
+    if (phase === "release") throw busy;
+  });
+  const removeWorktree = vi.spyOn(workspace, "removeWorktree").mockImplementation((_root, tree) => {
+    checkRecords(tree.path);
+    throw busy;
+  });
+  const text = await runResearch({ question: "current question" }, {
+    provider: { provider: "opencode-go", via: "login" },
+    opencode: async () => ({ url: "http://unused.invalid", password: "unused", version: "test" }),
+    progress: () => {},
+  });
+  const dir = join(repo.dir, ".cheapag", "jobs", id);
+  const record = JSON.parse(readFileSync(join(dir, "research.json"), "utf8"));
+  expect(record).toMatchObject({ status, cleanupError: busy.message, worktree: `.cheapag/worktrees/${id}`, usage: { ...usage, modelMessages: 1 } });
+  if (status === "FAIL") {
+    expect(record.reason).toBe("worker error: API rejected request (400)");
+    expect(text).toContain("reason: worker error: API rejected request (400)");
+  } else {
+    expect(record.answer).toBe("useful answer");
+    expect(record.reason).toBeUndefined();
+  }
+  expect(text).toContain(`worktree: .cheapag/worktrees/${id}/`);
+  expect(text).toContain(busy.message);
+  expect(readFileSync(join(dir, "result.txt"), "utf8")).toBe(text + "\n");
+  expect(existsSync(join(repo.dir, record.worktree))).toBe(true);
+  expect(releaseDirectory).toHaveBeenCalledTimes(1);
+  expect(removeWorktree).toHaveBeenCalledTimes(phase === "remove" ? 1 : 0);
+  expect(releaseHold).toHaveBeenCalledTimes(1);
+});
+
+test("session creation failure clears the minute timer and releases the hold", async () => {
+  const repo = tempRepo();
+  onTestFinished(repo.cleanup);
+  onTestFinished(() => { vi.restoreAllMocks(); });
+  vi.spyOn(workspace, "projectRoot").mockReturnValue(repo.dir);
+  vi.spyOn(consent, "consentGate").mockReturnValue({ route: routing.fullRoute("opencode-go") });
+  const releaseHold = vi.fn();
+  vi.spyOn(opencode, "holdOpencode").mockReturnValue(releaseHold);
+  vi.spyOn(worker, "openSession").mockRejectedValue(new Error("session creation failed"));
+  vi.spyOn(worker, "releaseDirectory").mockResolvedValue();
+  const timers = vi.spyOn(globalThis, "setTimeout");
+  const cleared = vi.spyOn(globalThis, "clearTimeout");
+  const text = await runResearch({ question: "q" }, {
+    provider: { provider: "opencode-go", via: "login" },
+    opencode: async () => ({ url: "http://unused.invalid", password: "unused", version: "test" }),
+    progress: () => {},
+  });
+  expect(text).toMatch(/^FAIL /);
+  expect(text).toContain("reason: worker error: session creation failed");
+  expect(timers).toHaveBeenCalledTimes(1);
+  expect(cleared).toHaveBeenCalledWith(timers.mock.results[0].value);
+  expect(releaseHold).toHaveBeenCalledTimes(1);
+});
+
 test("an unapproved repo gets CONSENT, naming the research model, before anything is created or sent", async () => {
   const { repo, fake, research } = await scenario({ allow: null });
   const text = await research({ question: "where is auth?" });
@@ -72,7 +189,7 @@ test("answers from the main checkout, uncommitted work included, with validated 
   const text = await research({ question: "where is JWT validated?" });
   const id = idOf(text);
   expect(text).toBe([
-    `ANSWER ${id} files_read=2 turns=4 cost=$0.003`,
+    `ANSWER ${id} files_read=2 turns=4 cost=unknown`,
     "files: src/auth.ts:18-22, src/app.ts:1",
     "notes:",
     "JWT is validated in src/auth.ts:18-22,",
@@ -92,7 +209,11 @@ test("answers from the main checkout, uncommitted work included, with validated 
 
   // the record and the block are logged; `jobs list` does not mistake research for a job
   const record = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "jobs", id, "research.json"), "utf8"));
-  expect(record).toMatchObject({ format: "cheapag/1", job: id, kind: "research", status: "ANSWER", unlanded: [], models: { requested: "opencode-go/qwen3.8-flash", final: "opencode-go/qwen3.8-flash" } });
+  expect(record).toMatchObject({ format: "cheapag/1", job: id, kind: "research", status: "ANSWER", reproStatus: "not-attempted", unlanded: [], models: { requested: "opencode-go/qwen3.8-flash", final: "opencode-go/qwen3.8-flash" } });
+  expect(record.repro).toBeUndefined();
+  // Only one of the assistant messages reports a price: preserve it without claiming a complete bill.
+  expect(record.usage).toMatchObject({ turns: 4, costUsd: 0.003, costSource: "unknown", inputTokens: 2000, outputTokens: 100 });
+  expect(record.usage.modelMessages).toBeGreaterThan(1);
   expect(readFileSync(join(repo.dir, ".cheapag", "jobs", id, "result.txt"), "utf8")).toBe(text + "\n");
   expect(await callText(server.client, "jobs", { action: "list" })).toBe("no jobs yet");
 });
@@ -151,7 +272,7 @@ test("UNSURE: when the worker says so, and (low confidence) when it answers with
   fake.script({ text: "It is in src/auth.ts:3 I think." });
   expect(await research({ question: "q" })).toMatch(/^UNSURE r\w{4} .*\nfiles: src\/auth.ts:3\nnotes:\nIt is in src\/auth.ts:3 I think.\nconfidence: low\n/);
   fake.script();
-  expect(await research({ question: "q" })).toMatch(/^FAIL r\w{4} files_read=0 turns=0 cost=\$0.000\nreason: the research worker gave no answer\nlog: /);
+  expect(await research({ question: "q" })).toMatch(/^FAIL r\w{4} files_read=0 turns=0 cost=unknown\nreason: the research worker gave no answer\nlog: /);
   fake.script({ error: { name: "ProviderAuthError", message: "bad key" } });
   expect(await research({ question: "q" })).toMatch(/\nreason: worker error: bad key\n/);
 });
@@ -161,7 +282,7 @@ test("a Go limit on the research model falls back to DeepSeek Flash in the same 
   fake.script({ usage: { cost: 0.001 } }, { retry: { reason: "account_rate_limit", message: "Resets in 2h" } });
   fake.script(block("status: answer\nconfidence: high\nanswer: ok"));
   const text = await research({ question: "q" });
-  expect(text).toMatch(/^ANSWER r\w{4} files_read=0 turns=0 cost=\$0.001 model=opencode-go\/deepseek-v4.1-flash\nnotes:\nok\n/);
+  expect(text).toMatch(/^ANSWER r\w{4} files_read=0 turns=0 cost=unknown model=opencode-go\/deepseek-v4.1-flash\nnotes:\nok\n/);
   // the shared routing machinery: one session, the fallback named on the continued prompt (src/routing.ts)
   expect(fake.recorded.sessions.map((s) => s.model?.id)).toEqual(["qwen3.8-flash"]);
   expect(fake.recorded.prompts.map((p) => p.model?.modelID)).toEqual([undefined, "deepseek-v4.1-flash"]);
@@ -177,7 +298,7 @@ test("a Go limit on the research model falls back to DeepSeek Flash in the same 
 test("the allowlist applies: without the research model, research runs on the allowed implement model", async () => {
   const { fake, research } = await scenario({ allow: ["--models", "opencode-go/deepseek-v4.1-flash"] });
   fake.script(block("status: answer\nconfidence: high\nanswer: ok"));
-  expect(await research({ question: "q" })).toMatch(/^ANSWER r\w{4} files_read=0 turns=0 cost=\$0.000\nnotes:\nok\n/);
+  expect(await research({ question: "q" })).toMatch(/^ANSWER r\w{4} files_read=0 turns=0 cost=unknown\nnotes:\nok\n/);
   expect(fake.recorded.sessions[0].model).toEqual({ providerID: "opencode-go", id: "deepseek-v4.1-flash" });
 });
 
@@ -240,7 +361,9 @@ test("a claimed reproduction the worker never ran is marked unverified and drops
   expect(text).not.toContain("dead ends:"); // "none" is not shown
   expect(text).toContain("\nconfidence: low\n");
   fake.script(block("status: answer\nconfidence: medium\nrepro: not attempted\nnotes: read only"));
-  expect(await research({ question: "where is it?" })).toMatch(/\nrepro: not attempted\n[\s\S]*\nconfidence: medium\n/);
+  const readOnly = await research({ question: "where is it?" });
+  expect(readOnly).not.toContain("\nrepro:");
+  expect(readOnly).toContain("\nconfidence: medium\n");
 });
 
 test("a turn cap recovers what the worker read: one no-tool prompt, rendered as ANSWER status=partial; other failures stay FAIL", async () => {
@@ -249,7 +372,7 @@ test("a turn cap recovers what the worker read: one no-tool prompt, rendered as 
   fake.script({ tool: "read" }, { tool: "grep" });
   fake.script(block("status: partial\nconfidence: medium\nrefs: src/auth.ts:18-22\nanswer:\nSo far: validation looks to be in src/auth.ts:18-22."));
   const text = await research({ question: "where is JWT validated?" });
-  expect(text).toMatch(/^ANSWER r\w{4} files_read=1 turns=2 cost=\$0.000 status=partial\nfiles: src\/auth.ts:18-22\nnotes:\nSo far: /);
+  expect(text).toMatch(/^ANSWER r\w{4} files_read=1 turns=2 cost=unknown status=partial\nfiles: src\/auth.ts:18-22\nnotes:\nSo far: /);
   expect(text).toContain("\nreason: turn cap (2) reached\n");
   expect(fake.recorded.prompts[1].parts).toMatchObject([{ text: expect.stringContaining("status: partial") }]);
   expect(fake.recorded.aborts).toEqual([]); // an aborted session answers "" (field report round 2)

@@ -41,10 +41,10 @@ test("a landing conflict gets one redo from the current tree, with the step and 
   const text = await (await start()).call("delegate", { plan: ".plan/p.md", steps: "1" });
   const job = jobOf(text);
 
-  expect(text).toMatch(new RegExp(`^OK ${job} step=1 files=1 \\+1/-1 tests=none turns=4 cost=\\$0\\.000 redo=1\n`));
+  expect(text).toMatch(new RegExp(`^OK ${job} step=1 files=1 \\+1/-1 tests=none turns=4 cost=unknown redo=1\n`));
   expect(readFileSync(inRepo("README.md"), "utf8")).toBe("# user's and worker's title\n\nuser's line\n");
   expect(existsSync(inRepo(".cheapag", "worktrees", job))).toBe(false);
-  expect(record(job)).toMatchObject({ status: "OK", landed: true, redo: 1, worktree: null });
+  expect(record(job)).toMatchObject({ status: "OK", landed: true, redo: 1, worktree: null, usage: { costUsd: 0, costSource: "unknown" } });
   expect(repo.git("status", "--porcelain", "--", "README.md")).toBe(" M README.md\n");
 
   // the same session was prompted once more: the step again, which files clash, and the original diff

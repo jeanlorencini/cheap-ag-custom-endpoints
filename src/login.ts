@@ -218,7 +218,8 @@ async function liveCheck(provider: Provider): Promise<{ ok: boolean; line: strin
     const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("no answer within 90s")), CHECK_TIMEOUT_MS)));
     const result = await Promise.race([run, timeout]);
     if (result.error) return { ok: false, line: explain(result.error, name) };
-    return { ok: true, line: `${name} answered (cost $${result.usage.costUsd.toFixed(4)})` };
+    const cost = result.usage.costSource === "provider-reported" ? `$${result.usage.costUsd.toFixed(4)}` : "unknown";
+    return { ok: true, line: `${name} answered (cost ${cost})` };
   } catch (err) {
     return { ok: false, line: explain((err as Error).message, name) };
   } finally {

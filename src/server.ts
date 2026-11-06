@@ -32,7 +32,7 @@ const HARD_RULE: Record<HardTasks, string> = {
  * The MCP `instructions` (spec: Server instructions; D12 is the status part): Claude Code loads them at session start,
  * so the usage rules travel with the server and nobody edits CLAUDE.md. Claude Code cuts them at 4,096 characters.
  */
-export const instructions = (hard: HardTasks = "delegate", takeover: TakeOver = "sonnet", host: "claude" | "codex" = "claude") => `Cheap Agent: a cheap worker model writes the code; you plan and review. The user pays for your tokens, not the worker's.
+export const instructions = (hard: HardTasks = "delegate", takeover: TakeOver = "sonnet", host: "claude" | "codex" = "claude") => `Cheap Agent: the worker writes code; you plan and review. Both consume tokens.
 ${host === "codex" ? "Codex: cheapag's tools (delegate, research, jobs, reply, land, ping) may be hidden until you search for them; search for them before reading or editing code.\n" : ""}Send every code change to delegate, including small, mechanical, "quick" or multi-file ones. One call: delegate(task: "<what to change, which files, how to check>"). Edit yourself only if the user asks, or to fix one line after a worker result. Bash file writes (heredocs, redirects, sed -i) are editing too. Write a task's details as - bullets or prose: numbered or lettered items count as separate changes, and three or more get the task refused.
 ${DIFFICULTY_HINT} Pass kind="feature" for new behavior or kind="fix" for bug repairs; error-handling features are not fixes.${HARD_RULE[hard]}
 ${REVIEW_RULE} ${TAKE_OVER_RULE[takeover]}
@@ -93,13 +93,13 @@ export async function serve(host: "claude" | "codex" = "claude") {
 
   server.registerTool(
     "ping",
-    { description: "Check that the Cheap Agent server is running and report its version." },
+    { description: "Report runtime identity and engine health. Custom loopback endpoints also get a TCP check; this does not verify model API health or authentication." },
     async () => {
       const provider = detectProvider();
       if (!provider) return safeText(NO_PROVIDER);
       try {
         const opencode = await ensureOpencode(provider);
-        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider)}`);
+        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider)}\nruntime=cheap-ag-custom-endpoints capabilities=custom-endpoint,task-kind engine=healthy model-api=not-checked`);
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
       }

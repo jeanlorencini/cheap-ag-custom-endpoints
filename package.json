@@ -1,6 +1,6 @@
 {
   "name": "cheap-agent",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Cheap Agent with native custom OpenAI-compatible endpoints for Claude Code and Codex.",
   "license": "MIT",
   "author": "muaaz9329",

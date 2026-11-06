@@ -51,6 +51,16 @@ Callers can pass `kind: "feature"` for new behavior or `kind: "fix"` for a bug r
 
 This prevents an error-handling feature from being stopped merely because its description contains words such as "error" or "exception". Bug fixes retain the reproduction-test deadline. All work still has normal turn, time, permission and verification limits; this does not guarantee that a worker always succeeds.
 
+## Runtime diagnostics and research
+
+`ping` identifies this fork as `runtime=cheap-ag-custom-endpoints` and lists its capabilities. Engine health is not model API health: it does not validate authentication, model availability or billing. Before starting a custom loopback job, Cheap Agent makes a bounded TCP connection check, without sending credentials or an HTTP request. An unavailable local relay fails before a worker or worktree is created. Remote endpoints are not preflighted; a successful local TCP check is not proof that the API will answer.
+
+Research persists its terminal result before cleanup. If cleanup fails after its existing retries, the result retains the worker error separately from `cleanupError` and reports the retained `worktree`; cleanup failure does not erase a successful answer. Research commands must be simple and permitted by policy, never shell chains rewritten to bypass a denial. Ignored references may be absent from the isolated snapshot even when they exist in the original checkout; give the worker the current checkpoint and relevant bounded context.
+
+Usage `turns` counts tool calls, not model responses; `modelMessages` counts unique assistant message IDs. Token usage is deduplicated by message ID. `costSource` distinguishes positive engine-reported costs from unknown costs: zero or missing engine prices display as `cost=unknown`, not free usage. Reported costs are not independently verified provider charges, and cost caps cannot enforce unreported charges. Research reproduction status is separate from its command and outcome; only an exact whitespace-normalized command actually executed by the worker is marked verified.
+
+Release 1.3.3 was checked with typecheck, build and targeted regression tests, including a real OpenCode engine against a mock HTTP API. It is not a claim of a clean full-suite run: two short-deadline integration tests also fail on the previous commit on Windows, and the permissions integration requires GNU Make. No live-provider reliability or billing guarantee is implied.
+
 ## Update, remove and build locally
 
 Re-run the Git install command to update the runtime, and refresh the marketplace with `codex plugin marketplace upgrade cheap-agent-custom-endpoints`. Updates use this fork's main branch; review changes before updating.

@@ -29,7 +29,7 @@ function repoWithState() {
     const inFlight = status === "RUNNING" || status === "BLOCKED";
     writeFileSync(join(dir, "result.json"), JSON.stringify({
       format: "cheapag/1", job: id, status, landed: status === "OK", steps: "1", summary: "", changed: [], risks: [], review: [], missing: [],
-      worktree: opts.worktree ? `.cheapag/worktrees/${id}` : null, usage: { turns: 0, costUsd: 0 }, selfFix: 0,
+      worktree: opts.worktree ? `.cheapag/worktrees/${id}` : null, usage: { turns: 0, modelMessages: 0, costUsd: 0, costSource: "unknown" }, selfFix: 0,
       models: { requested: "m", final: "m", escalated: false }, pid: opts.pid ?? deadPid, timing: { startedAt: at, endedAt: inFlight ? null : at },
     }));
     writeFileSync(join(dir, "result.txt"), `${status} ${id}\n`);

@@ -32,7 +32,7 @@ test("codex host gets Codex instructions, no Claude-only rules, same server name
   try {
     expect(codex.client.getServerVersion()).toMatchObject({ name: "cheapag", version });
     const instructions = codex.client.getInstructions()!;
-    expect(instructions).toContain("npx cheap-agent allow");
+    expect(instructions).toContain("npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main allow");
     expect(instructions).toContain("do the task yourself");
     expect(instructions).toContain("seconds=15");
     expect(instructions).toContain("- bullets");
@@ -55,7 +55,7 @@ test("delegate and research load upfront in Claude Code, with descriptions that 
 
 test("ping with no worker credentials fails with setup instructions", async () => {
   expect(await callText(server.client, "ping")).toBe(
-    "FAIL reason: no worker provider; run npx cheap-agent login",
+    "FAIL reason: no worker provider; run npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login",
   );
 });
 

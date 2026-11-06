@@ -57,12 +57,12 @@ test("independent groups run concurrently in their own worktrees, land in step o
 
   expect(t.start2).toBeLessThan(t.end1); // overlapping in time
   expect(seen).toEqual({ bLanded: false, bReady: true }); // step 2 was done, yet not landed before step 1
-  expect(text.split("\n")[0]).toBe(`BATCH ${batch} groups=2 OK=2 landed=2 integration=none cost=$0.000`);
+  expect(text.split("\n")[0]).toBe(`BATCH ${batch} groups=2 OK=2 landed=2 integration=none cost=unknown`);
   expect(text).toBe([
-    `BATCH ${batch} groups=2 OK=2 landed=2 integration=none cost=$0.000`,
-    `OK ${j1.job} step=1 files=1 +1/-0 tests=none turns=2 cost=$0.000`,
+    `BATCH ${batch} groups=2 OK=2 landed=2 integration=none cost=unknown`,
+    `OK ${j1.job} step=1 files=1 +1/-0 tests=none turns=2 cost=unknown`,
     "",
-    `OK ${j2.job} step=2 files=1 +1/-0 tests=none turns=2 cost=$0.000`,
+    `OK ${j2.job} step=2 files=1 +1/-0 tests=none turns=2 cost=unknown`,
     `full blocks: jobs show ${j1.job}, ${j2.job}`,
   ].join("\n"));
   expect([j1.step, j2.step]).toEqual(["1", "2"]);
@@ -120,9 +120,9 @@ test("a dependency that did not land OK: the dependent group is not started and 
   );
   const text = await delegate("1,2,3");
   const jobs = jobsIn(text);
-  expect(text.split("\n")[0]).toMatch(/^BATCH b[0-9a-z]{4} groups=3 FAIL=2 OK=1 landed=1 integration=none cost=\$0\.000$/);
+  expect(text.split("\n")[0]).toMatch(/^BATCH b[0-9a-z]{4} groups=3 FAIL=2 OK=1 landed=1 integration=none cost=unknown$/);
   const two = jobs.find((j) => j.step === "2")!;
-  expect(text).toContain(`FAIL ${two.job} step=2 files=0 +0/-0 turns=0 cost=$0.000\nreason: needs 1 (FAIL)\n\n`);
+  expect(text).toContain(`FAIL ${two.job} step=2 files=0 +0/-0 turns=0 cost=unknown\nreason: needs 1 (FAIL)\n\n`);
   expect(text).not.toContain(`.cheapag/jobs/${two.job}/`); // compact: no log line
   expect(fake.recorded.sessions).toHaveLength(2); // step 2 never got a session
   expect(inRepo("c.txt")).toBe(true);
@@ -206,8 +206,8 @@ test("a group BLOCKED early: delegate returns at once with it first, the others 
   const batch = batchOf(early);
   const [one, two, three] = jobsIn(early).sort((a, b) => a.step.localeCompare(b.step)).map((j) => j.job);
   expect(early).toMatch(new RegExp([
-    `^BATCH ${batch} groups=3 BLOCKED=1 RUNNING=2 landed=0 integration=none cost=\\$0\\.000`,
-    `BLOCKED ${two} step=2 files=0 \\+0/-0 turns=0 cost=\\$0\\.000`,
+    `^BATCH ${batch} groups=3 BLOCKED=1 RUNNING=2 landed=0 integration=none cost=unknown`,
+    `BLOCKED ${two} step=2 files=0 \\+0/-0 turns=0 cost=unknown`,
     "question: Which header style\\?",
     "options:",
     "  a\\) atx",
@@ -222,12 +222,12 @@ test("a group BLOCKED early: delegate returns at once with it first, the others 
 
   // the reply resolves like delegate (spec: Tool contracts): here nothing else blocks, so it returns the settled batch
   const afterReply = await call("reply", { job: two, answer: "a" });
-  expect(header(afterReply)).toBe(`BATCH ${batch} groups=3 OK=3 landed=3 integration=none cost=$0.000`);
+  expect(header(afterReply)).toBe(`BATCH ${batch} groups=3 OK=3 landed=3 integration=none cost=unknown`);
   expect(afterReply).not.toContain("question:");
   expect(fake.recorded.questionReplies).toEqual([{ requestID: expect.any(String), answers: [["atx"]], rejected: false }]);
 
   const done = await settle(call, batch);
-  expect(header(done)).toBe(`BATCH ${batch} groups=3 OK=3 landed=3 integration=none cost=$0.000`);
+  expect(header(done)).toBe(`BATCH ${batch} groups=3 OK=3 landed=3 integration=none cost=unknown`);
   expect(done).not.toContain("next:");
   expect(inRepo("a.txt") && inRepo("b.txt") && inRepo("c.txt")).toBe(true);
   const record = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "batches", `${batch}.json`), "utf8"));
@@ -275,7 +275,7 @@ test("max_blocked_minutes inside a batch: the unanswered group is CANCELLED, job
   expect(header(early)).toMatch(/ BLOCKED=1 /);
   await new Promise((r) => setTimeout(r, 1000));
   const done = await settle(call, batch);
-  expect(header(done)).toBe(`BATCH ${batch} groups=2 CANCELLED=1 OK=1 landed=1 integration=none cost=$0.000`);
+  expect(header(done)).toBe(`BATCH ${batch} groups=2 CANCELLED=1 OK=1 landed=1 integration=none cost=unknown`);
   expect(done).toContain(`CANCELLED ${one} step=1 `);
   expect(done).toContain("\nreason: no reply within 0.01 min\n");
   expect(inRepo("a.txt")).toBe(false);
@@ -291,7 +291,7 @@ test("wait=false returns every group RUNNING at once; jobs wait follows the batc
   const batch = batchOf(text);
   const [one, two] = jobsIn(text).map((j) => j.job);
   expect(text).toBe([
-    `BATCH ${batch} groups=2 RUNNING=2 landed=0 integration=none cost=$0.000`,
+    `BATCH ${batch} groups=2 RUNNING=2 landed=0 integration=none cost=unknown`,
     `RUNNING ${one} step=1 turns=0`,
     `RUNNING ${two} step=2 turns=0`,
     `next: jobs(action="wait", job="${batch}")`,
@@ -423,8 +423,8 @@ test("a semantic break (clean merge, failing combined check) gets a fix job on t
   const batch = batchOf(text);
   const fix = jobsIn(text)[0];
   expect(text.split("\n").slice(0, 2)).toEqual([
-    `BATCH ${batch} groups=2 OK=2 landed=2 integration=pass cost=$0.000`,
-    `OK ${fix.job} step=1,2 files=1 +1/-0 tests=pass turns=2 cost=$0.000`, // the fix job's block first
+    `BATCH ${batch} groups=2 OK=2 landed=2 integration=pass cost=unknown`,
+    `OK ${fix.job} step=1,2 files=1 +1/-0 tests=pass turns=2 cost=unknown`, // the fix job's block first
   ]);
   expect(text).not.toContain("error:");
   expect(s.fake.recorded.sessions).toHaveLength(3);
@@ -445,7 +445,7 @@ test("a fix job that cannot make the combined check pass: integration=fail with 
   const batch = batchOf(text);
   const fix = jobsIn(text)[0];
   expect(text.split("\n").slice(0, 4)).toEqual([
-    `BATCH ${batch} groups=2 OK=2 landed=2 integration=fail cost=$0.000`,
+    `BATCH ${batch} groups=2 OK=2 landed=2 integration=fail cost=unknown`,
     `error: \`${CHECK}\``,
     "  Error: a.txt and b.txt clash",
     expect.stringMatching(new RegExp(`^FAIL ${fix.job} step=1,2 files=1 \\+1/-0 tests=fail `)),
@@ -460,11 +460,11 @@ test("a group that did not land keeps integration=pending; land discard of it ru
   const text = await s.delegate("1,2");
   const batch = batchOf(text);
   const two = jobsIn(text).find((j) => j.step === "2")!.job;
-  expect(header(text)).toBe(`BATCH ${batch} groups=2 FAIL=1 OK=1 landed=1 integration=pending cost=$0.000`);
+  expect(header(text)).toBe(`BATCH ${batch} groups=2 FAIL=1 OK=1 landed=1 integration=pending cost=unknown`);
   expect(batchRecord(s.repo.dir, batch).verify).toEqual([]); // no check yet
 
   const landed = await s.call("land", { job: two, action: "discard" });
-  expect(landed.split("\n").slice(0, 3)).toEqual([`OK ${two} discarded`, "", `BATCH ${batch} groups=2 FAIL=1 OK=1 landed=1 integration=pass cost=$0.000`]);
+  expect(landed.split("\n").slice(0, 3)).toEqual([`OK ${two} discarded`, "", `BATCH ${batch} groups=2 FAIL=1 OK=1 landed=1 integration=pass cost=unknown`]);
   expect(batchRecord(s.repo.dir, batch)).toMatchObject({ integration: "pass", verify: [{ cmd: CHECK, ok: true }] });
   expect(s.fake.recorded.sessions).toHaveLength(2); // it passed: no fix job
 }, slow(30_000));
@@ -479,7 +479,7 @@ test("land apply of the last unlanded group runs the check; its failure gets a f
 
   const landed = await s.call("land", { job: two, action: "apply" });
   const lines = landed.split("\n");
-  expect(lines.slice(0, 3)).toEqual([`OK ${two} applied files=1 +1/-0`, "", `BATCH ${batch} groups=2 FAIL=1 OK=1 landed=2 integration=pass cost=$0.000`]);
+  expect(lines.slice(0, 3)).toEqual([`OK ${two} applied files=1 +1/-0`, "", `BATCH ${batch} groups=2 FAIL=1 OK=1 landed=2 integration=pass cost=unknown`]);
   expect(lines[3]).toMatch(/^OK j\w{4} step=1,2 files=1 \+1\/-0 tests=pass /);
   expect(s.inRepo("b.txt") && s.inRepo("fixed.txt")).toBe(true);
   expect(batchRecord(s.repo.dir, batch)).toMatchObject({ integration: "pass", fix: lines[3].split(" ")[1] });

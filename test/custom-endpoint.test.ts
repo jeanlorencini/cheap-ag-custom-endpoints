@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { customEndpoint, customProviderConfig, customProviderId, normalizeEndpoint, saveCustomEndpoint, validateCustomEndpoint } from "../src/custom-endpoint.js";
+import { checkLocalEndpoint, customEndpoint, customProviderConfig, customProviderId, normalizeEndpoint, saveCustomEndpoint, validateCustomEndpoint } from "../src/custom-endpoint.js";
 import { detectProvider, redact, savedProviders } from "../src/credentials.js";
 import { consentGate, writeConsent } from "../src/consent.js";
 import { fullRoute, modelName, routeModels } from "../src/routing.js";
@@ -62,6 +62,61 @@ test("saved settings contain no key and default every role to the selected custo
   expect(route.fallbacks).toEqual([]);
   expect(route.researchFallbacks).toEqual([]);
   expect(customProviderConfig(ENDPOINT).options).toEqual({ baseURL: ENDPOINT.baseURL });
+});
+
+test("loopback preflight checks transport without HTTP or credentials and detects a stopped relay", async () => {
+  let requests = 0;
+  const api = createServer((_, res) => { requests++; res.end(); });
+  await new Promise<void>(resolve => api.listen(0, "127.0.0.1", resolve));
+  const endpoint = { ...ENDPOINT, baseURL: `http://127.0.0.1:${(api.address() as { port: number }).port}/v1` };
+  try {
+    expect(await checkLocalEndpoint(endpoint)).toBe("tcp-reachable");
+    expect(requests).toBe(0);
+  } finally { await new Promise<void>(resolve => api.close(() => resolve())); }
+  await expect(checkLocalEndpoint(endpoint)).rejects.toThrow(/ECONNREFUSED.*check the local relay/);
+  expect(await checkLocalEndpoint(ENDPOINT)).toBe("not-checked");
+});
+
+test("an unavailable local relay fails before worktrees, jobs or worker sessions are created", async () => {
+  const api = createServer();
+  await new Promise<void>(resolve => api.listen(0, "127.0.0.1", resolve));
+  const endpoint = { ...ENDPOINT, baseURL: `http://127.0.0.1:${(api.address() as { port: number }).port}/v1` };
+  await new Promise<void>(resolve => api.close(() => resolve()));
+  saveCustomEndpoint(endpoint);
+  storeLogin(endpoint);
+  const repo = tempRepo();
+  const fake = await startFakeOpencode();
+  let server: Awaited<ReturnType<typeof startServer>> | undefined;
+  try {
+    server = await startServer({ cwd: repo.dir, env: { ...homeEnv(home), CHEAPAG_OPENCODE_URL: fake.url }, allow: [] });
+    for (const [tool, args] of [["research", { question: "where is hello?" }], ["delegate", { task: "Write hello.txt", files: "hello.txt", kind: "feature" }]] as const) {
+      expect(await callText(server.client, tool, args)).toMatch(/^FAIL reason: custom endpoint loopback transport unavailable \(ECONNREFUSED\)/);
+    }
+    expect(existsSync(join(repo.dir, ".cheapag", "worktrees"))).toBe(false);
+    expect(existsSync(join(repo.dir, ".cheapag", "jobs"))).toBe(false);
+    expect(fake.recorded.sessions).toEqual([]);
+    expect(fake.recorded.requests).toEqual([]);
+  } finally { await server?.close(); await fake.close(); repo.cleanup(); }
+});
+
+test("a cached healthy engine does not hide a relay that stopped between jobs", async () => {
+  const relay = createServer();
+  await new Promise<void>(resolve => relay.listen(0, "127.0.0.1", resolve));
+  const endpoint = { ...ENDPOINT, baseURL: `http://127.0.0.1:${(relay.address() as { port: number }).port}/v1` };
+  const fake = await startFakeOpencode();
+  try {
+    saveCustomEndpoint(endpoint);
+    storeLogin(endpoint);
+    vi.stubEnv("CHEAPAG_OPENCODE_URL", fake.url);
+    const provider = { provider: "custom", via: "login" } as const;
+    await expect(ensureOpencode(provider, home, fullRoute("custom"))).resolves.toHaveProperty("url", fake.url);
+    await new Promise<void>(resolve => relay.close(() => resolve()));
+    await expect(ensureOpencode(provider, home, fullRoute("custom"))).rejects.toThrow("ECONNREFUSED");
+    expect(fake.recorded.requests.map(r => r.path)).toEqual(["/global/health"]);
+  } finally {
+    relay.close();
+    await fake.close();
+  }
 });
 
 test("explicit custom selection beats other logins without changing built-in detection order", () => {
