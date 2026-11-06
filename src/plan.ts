@@ -4,12 +4,13 @@ import { DIFFICULTIES, type Difficulty } from "./routing.js";
 
 export type PlanStep = { id: string; title: string; fields: Record<string, string>; text: string };
 export type Plan = { title: string; context: string; steps: PlanStep[] };
+export type TaskKind = "feature" | "fix";
 
 const REQUIRED = ["files", "done-when"];
 
 /** The plan grammar in one line, for Claude: the delegate tool description and every plan-error FAIL carry it. */
 export const PLAN_FORMAT =
-  'Plan format: one "# <title>" line, then per step a "## <id> <title>" heading followed by "files: <paths>", "do: <what>", "done-when: <check>" (optional "dont:", "needs: <step ids>", "difficulty: easy|medium|hard"), each key at the start of its line, not a bullet. In done-when, `backticked` text is run as a shell command that must succeed; put only commands in backticks. Numbered or lettered list items count as separate changes, and a step or task with three or more is refused; write the details of one change as - bullets or prose.';
+  'Plan format: one "# <title>" line, then per step a "## <id> <title>" heading followed by "files: <paths>", "do: <what>", "done-when: <check>" (optional "dont:", "needs: <step ids>", "difficulty: easy|medium|hard", "kind: feature|fix"), each key at the start of its line, not a bullet. In done-when, `backticked` text is run as a shell command that must succeed; put only commands in backticks. Numbered or lettered list items count as separate changes, and a step or task with three or more is refused; write the details of one change as - bullets or prose.';
 
 /** Parses a plan; throws with a precise, line-numbered reason when it does not follow the format. */
 export function parsePlan(source: string): Plan {
@@ -61,6 +62,8 @@ export function parsePlan(source: string): Plan {
     const missing = REQUIRED.filter((key) => !step.fields[key]);
     if (missing.length) throw new Error(`step ${step.id} (line ${step.line}): missing ${missing.map((k) => `${k}:`).join(", ")}`);
     const d = step.fields.difficulty;
+    const kind = step.fields.kind;
+    if (kind !== undefined && kind !== "feature" && kind !== "fix") throw new Error(`step ${step.id}: kind: must be feature or fix`);
     if (d !== undefined && !DIFFICULTIES.includes(d as Difficulty)) throw new Error(`step ${step.id} (line ${step.line}): difficulty: must be ${DIFFICULTIES.join(", ")} or left out`);
     const hidden = step.fields.files.split(/[,\n]/).map((f) => f.trim().replace(/^\.\//, "")).find((f) => f.split("/")[0] === ".cheapag");
     if (hidden) throw new Error(`line ${step.filesLine}: step ${step.id} files: ${hidden} is under .cheapag/, Cheap Agent's state folder, which workers cannot see; keep plans in .plan/ and targets in the repo`);

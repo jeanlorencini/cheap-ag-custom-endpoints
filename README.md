@@ -1,3 +1,82 @@
+# Cheap Agent Custom Endpoints
+
+Fork of [muaaz9329/cheap-ag](https://github.com/muaaz9329/cheap-ag), retaining the upstream MIT license and attribution.
+
+This fork adds native **custom OpenAI-compatible endpoints**. It configures the endpoint directly, without private launchers, hardcoded user paths, provider aliases or committed credentials. The original four built-in providers remain available.
+
+## Install this fork
+
+Requires Node.js 20.11+, Git and, on Windows, Git Bash. The package is installed from GitHub, not from a separately published npm package:
+
+```sh
+npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login
+```
+
+Choose **Custom OpenAI-compatible endpoint** (option 5), enter a base URL such as `https://api.example.com/v1`, and an explicit model ID such as `example-model`. OpenCode then collects the API key in its hidden prompt. The endpoint must implement OpenAI Chat Completions and support tool calls. Responses-only endpoints are not supported.
+
+For a local server use an HTTP loopback URL, for example `http://127.0.0.1:8000/v1`. Remote endpoints require HTTPS. URLs with embedded credentials, query strings or fragments are rejected. Include the API's base path, usually `/v1`; do not append `/chat/completions`.
+
+For Codex:
+
+```sh
+codex plugin marketplace add jeanlorencini/cheap-ag-custom-endpoints
+codex plugin add cheapag@cheap-agent-custom-endpoints
+```
+
+Restart Codex, trust the plugin hooks, and run `$cheapag:allow --models custom/example-model` in each Git project. Claude Code users can accept login's plugin setup and then run `/cheapag:allow --models custom/example-model`.
+
+Use one enabled Cheap Agent copy at a time. Disable or remove the upstream plugin before enabling this fork; both expose tools named cheapag. Existing user settings are preserved, but choosing a provider explicitly makes it the active provider.
+
+## Credential and consent boundaries
+
+Only the global user config `~/.config/cheapag/config.json` can choose a custom endpoint. Login writes non-secret settings of this shape:
+
+```json
+{
+  "provider": "custom",
+  "custom_endpoint": {
+    "base_url": "https://api.example.com/v1",
+    "model": "example-model"
+  }
+}
+```
+
+Never put an API key in this JSON or a repository's `cheapag.json`. Keys stay in OpenCode's credential store under an endpoint-specific hashed provider ID. A changed endpoint cannot reuse the old endpoint's key; run login again. Repository consent is also bound to the endpoint and must be renewed after a change. Repository settings cannot redirect that credential to another endpoint.
+
+One selected model is used for every role by default, with no external fallback. Runtime errors and job output redact saved custom keys, including non-standard token formats. The endpoint's retention policy is **not known** to this tool; `--zdr-only` does not certify a custom endpoint.
+
+## Explicit task intent
+
+Callers can pass `kind: "feature"` for new behavior or `kind: "fix"` for a bug repair. Plans accept the same `kind:` field per step. Explicit intent takes precedence over keyword inference, and a plan step takes precedence over the call-wide value.
+
+This prevents an error-handling feature from being stopped merely because its description contains words such as "error" or "exception". Bug fixes retain the reproduction-test deadline. All work still has normal turn, time, permission and verification limits; this does not guarantee that a worker always succeeds.
+
+## Update, remove and build locally
+
+Re-run the Git install command to update the runtime, and refresh the marketplace with `codex plugin marketplace upgrade cheap-agent-custom-endpoints`. Updates use this fork's main branch; review changes before updating.
+
+```sh
+codex plugin remove cheapag@cheap-agent-custom-endpoints
+codex plugin marketplace remove cheap-agent-custom-endpoints
+```
+
+To build a local checkout:
+
+```sh
+git clone https://github.com/jeanlorencini/cheap-ag-custom-endpoints.git
+cd cheap-ag-custom-endpoints
+npm ci
+npm run typecheck
+npm run build
+node dist/index.js login
+```
+
+The benchmark and price claims in the upstream background below refer to upstream experiments, not measurements of this fork. A reported cost of zero may mean that the endpoint supplies no billing data. Savings and charges depend on your own endpoint and account.
+
+---
+
+## Upstream project background
+
 <h1 align="center">Cheap Agent</h1>
 
 <p align="center">
@@ -45,7 +124,7 @@ Set up Cheap Agent (npm: cheap-agent) for me.
 2. Check that node is 20+ and the claude CLI is installed.
 3. If I picked my own model, save {"models":{"implement":"<model>"}} in
    ~/.config/cheapag/config.json, keeping what else is there.
-4. Give me the command to run in my terminal: npx cheap-agent login --preset <my choice,
+4. Give me the command to run in my terminal: npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login --preset <my choice,
    or custom>, and which number to pick for my provider (1 OpenCode Go, 2 OpenRouter,
    3 DeepSeek, 4 Command Code). I run it and type my API key there. Never ask for my key.
 5. When I say done, check `claude mcp list` shows cheapag, then tell me to run
@@ -55,7 +134,7 @@ Set up Cheap Agent (npm: cheap-agent) for me.
 **Or do it yourself:**
 
 ```bash
-npx cheap-agent
+npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main
 ```
 
 Pick a provider (**OpenRouter** if unsure), press Enter for the recommended models, paste your API key. It checks the key works, then adds itself to Claude Code for every project.
@@ -73,17 +152,17 @@ Then, in each project, once:
 Log in (say no when it offers to add itself to Claude Code, if you don't use Claude):
 
 ```bash
-npx cheap-agent
+npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main
 ```
 
 Add the plugin:
 
 ```bash
-codex plugin marketplace add muaaz9329/cheap-ag
+codex plugin marketplace add jeanlorencini/cheap-ag-custom-endpoints
 ```
 
 ```bash
-codex plugin add cheapag@cheap-agent
+codex plugin add cheapag@cheap-agent-custom-endpoints
 ```
 
 Start `codex` in your project and trust the 3 cheapag hooks when it asks. Then, in each project, once:
@@ -176,7 +255,7 @@ Native Windows support (36 files, +753/−278 lines) was built with Cheap Agent.
 | `/cheapag:hook on` | `$cheapag:hook on` | No more "I'll just do it myself": your frontier model *must* hand code changes to the cheap model. |
 | `/cheapag:clean` | `$cheapag:clean` | Tidy up old job folders. |
 
-While a job runs, Claude Code shows the worker's latest step under the tool call, and Codex shows it each time it checks in (about every 15 seconds). To follow every step in a second terminal, run `npx cheap-agent watch`.
+While a job runs, Claude Code shows the worker's latest step under the tool call, and Codex shows it each time it checks in (about every 15 seconds). To follow every step in a second terminal, run `npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main watch`.
 
 ## Settings
 
@@ -186,7 +265,7 @@ Optional. Put a `cheapag.json` in a project:
 |---|---|---|
 | `takeover` | `"sonnet"` | Who finishes a step the cheap model couldn't: a Sonnet helper, or `"self"` (your frontier model, capped at 15 tool calls). Claude Code only; Codex finishes it itself. |
 | `limits.max_turns` | `25` | The most turns the cheap model gets per step. |
-| `models` | from setup | Which cheap models to use. Switch with `npx cheap-agent login --preset strongest`. |
+| `models` | from setup | Which cheap models to use. Switch with `npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login --preset strongest`. |
 
 ## FAQ
 
@@ -217,12 +296,12 @@ PRs are welcome, and I'm more than happy to merge them. Setup, where things live
 
 ## Update or remove
 
-New versions are announced on the [Releases page](https://github.com/muaaz9329/cheap-ag/releases). Cheap Agent also tells you when a session starts if a new minor or major version is out; set `CHEAPAG_NO_UPDATE_CHECK=1` to turn that off.
+New versions are announced on the [Releases page](https://github.com/jeanlorencini/cheap-ag-custom-endpoints/releases). Cheap Agent also tells you when a session starts if a new minor or major version is out; set `CHEAPAG_NO_UPDATE_CHECK=1` to turn that off.
 
 **Update:**
 
 ```bash
-npx cheap-agent@latest
+npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main
 ```
 
 In Codex, also:
@@ -234,7 +313,7 @@ codex plugin marketplace upgrade
 **Remove** (two commands):
 
 ```bash
-claude plugin uninstall cheapag@cheapag
+claude plugin uninstall cheapag@cheap-agent-custom-endpoints
 ```
 
 ```bash
@@ -244,5 +323,5 @@ claude mcp remove -s user cheapag
 In Codex:
 
 ```bash
-codex plugin remove cheapag@cheap-agent
+codex plugin remove cheapag@cheap-agent-custom-endpoints
 ```

@@ -1,3 +1,4 @@
+import { NPX } from "./distribution.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve, sep } from "node:path";
@@ -79,10 +80,10 @@ export function hook(args: string[]): number | Promise<number> {
 export const SESSION_CONTEXT = `Cheap Agent is connected: send every code change to its delegate tool (task: "<what to change, which files, how to check>"); its server instructions have the rules.`;
 
 const { version: INSTALLED } = createRequire(import.meta.url)("../package.json") as { version: string };
-const UPDATE_URL = "https://registry.npmjs.org/cheap-agent/latest";
+const UPDATE_URL = "https://api.github.com/repos/jeanlorencini/cheap-ag-custom-endpoints/releases/latest";
 // once a day is enough for a notice the user cannot act on mid-session (Claude Code's own check is the same shape)
 const DAY_MS = 24 * 60 * 60 * 1000;
-const updateCacheFile = () => join(dirname(userConfigFile()), "update-check.json");
+const updateCacheFile = () => join(dirname(userConfigFile()), "custom-endpoints-update-check.json");
 type UpdateCache = { checked?: number; latest?: string };
 
 /**
@@ -111,11 +112,11 @@ async function context(host?: "claude" | "codex"): Promise<number> {
   const latest = await newerVersion();
   // The terminal notice is yellow, except in the desktop app, which renders no colours; there the sentence Claude
   // reads in additionalContext is what surfaces the update.
-  const systemMessage = latest && colour(`Cheap Agent ${latest} is available (you have ${INSTALLED}). Update: npx cheap-agent@latest`);
+  const systemMessage = latest && colour(`Cheap Agent ${latest} is available (you have ${INSTALLED}). Update: ${NPX}`);
   // imported lazily so the guard and result hooks never load the MCP server
   const base = target === "codex" ? (await import("./server.js")).hostInstructions("codex", process.cwd()) : SESSION_CONTEXT;
   const additionalContext = latest
-    ? `${base} Cheap Agent ${latest} is available (the user has ${INSTALLED}): at the start of your first reply, tell the user in one line to update with \`npx cheap-agent@latest\`.`
+    ? `${base} Cheap Agent ${latest} is available (the user has ${INSTALLED}): at the start of your first reply, tell the user in one line to update with \`${NPX}\`.`
     : base;
   process.stdout.write(JSON.stringify({
     ...(systemMessage && { systemMessage }),
@@ -152,8 +153,10 @@ async function latestVersion(): Promise<string | undefined> {
   let latest = cache.latest || undefined;
   try {
     const res = await fetch(UPDATE_URL, { signal: AbortSignal.timeout(1500) });
-    const body = (await res.json()) as { version?: unknown };
-    if (typeof body.version === "string") latest = body.version;
+    if (!res.ok) return latest;
+    const body = (await res.json()) as { version?: unknown; tag_name?: unknown };
+    const release = typeof body.tag_name === "string" ? body.tag_name.replace(/^v/, "") : body.version;
+    if (typeof release === "string") latest = release;
   } catch {
     // offline, slow or malformed: keep the old latest (or none)
   }

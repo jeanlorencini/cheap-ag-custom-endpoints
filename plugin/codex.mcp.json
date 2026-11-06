@@ -2,7 +2,7 @@
   "mcpServers": {
     "cheapag": {
       "command": "npx",
-      "args": ["-y", "cheap-agent@1.3.2", "codex"],
+      "args": ["-y", "github:jeanlorencini/cheap-ag-custom-endpoints#main", "codex"],
       "omit_tools_from": ["code_mode", "deferred"]
     }
   }

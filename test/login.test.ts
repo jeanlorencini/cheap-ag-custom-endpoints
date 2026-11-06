@@ -6,6 +6,7 @@ import { expect, onTestFinished, test } from "vitest";
 import { installPaths, writePlugin } from "../src/install.js";
 import { normalisePath } from "../src/platform.js";
 import { PRESETS } from "../src/routing.js";
+import { customProviderId } from "../src/custom-endpoint.js";
 import { startFakeOpencode, type Action } from "./fake-opencode.js";
 import { hermeticHome, serverEntry, slow, tempRepo, type Logins } from "./harness.js";
 
@@ -19,6 +20,26 @@ const KEY = "sk-or-v1-loginTESTkey0123456789abcdef";
  */
 // the terminal-driven tests need python3 and a pty, which Windows lacks; the launcher and win32 generation tests still run there
 const tty = test.skipIf(process.platform === "win32");
+
+tty("custom login uses OpenCode's hidden prompt and saves only portable endpoint settings", async () => {
+  const endpoint = { baseURL: "https://api.example.com/v1", model: "example-model" };
+  const result = await runLogin({
+    claude: "unregistered", register: "n",
+    steps: [
+      { expect: "Provider", send: "5\r" },
+      { expect: "EndpointbaseURL", send: endpoint.baseURL + "\r" },
+      { expect: "ModelID", send: endpoint.model + "\r" },
+      { expect: "EnteryourAPIkey", send: KEY + "\r" },
+      { expect: "Y/n", send: "n\r" },
+    ],
+  });
+  expect(result.exit).toBe("EXIT 0");
+  expect(result.saved).toContain(customProviderId(endpoint));
+  expect(result.config.provider).toBe("custom");
+  expect(result.config.custom_endpoint).toEqual({ base_url: endpoint.baseURL, model: endpoint.model });
+  expect(result.config.models.implement).toBe("custom/example-model");
+  expect(result.output).not.toContain(KEY);
+});
 
 async function runLogin(opts: { claude: "registered" | "local" | "unregistered" | "absent"; register?: "y" | "n"; check?: Action[]; logins?: Logins; path?: string[]; preset?: string; args?: string[]; config?: object; plugin?: "installed" | "fails"; cmd?: string[]; registeredCommand?: string[]; steps?: { expect: string; send: string }[] }) {
   const fake = await startFakeOpencode();
@@ -38,7 +59,7 @@ async function runLogin(opts: { claude: "registered" | "local" | "unregistered" 
     const registered = opts.registeredCommand ?? [process.execPath, serverEntry];
     const get = scope ? `echo "cheapag:"; echo "  Scope: ${scope}"; echo "  Command: ${registered[0]}"; echo "  Args: ${registered.slice(1).join(" ")}"; exit 0` : "exit 1";
     // ticket 31: "plugin list" / "plugin marketplace list" name cheapag once installed; "plugin install" can fail
-    const listed = opts.plugin === "installed" ? `if [ "$1 $2" = "plugin list" ]; then echo "  ❯ cheapag@cheapag"; fi\nif [ "$1 $2 $3" = "plugin marketplace list" ]; then echo "  ❯ cheapag"; fi\n` : "";
+    const listed = opts.plugin === "installed" ? `if [ "$1 $2" = "plugin list" ]; then echo "  ❯ cheapag@cheap-agent-custom-endpoints"; fi\nif [ "$1 $2 $3" = "plugin marketplace list" ]; then echo "  ❯ cheap-agent-custom-endpoints"; fi\n` : "";
     const fails = opts.plugin === "fails" ? `if [ "$1 $2" = "plugin install" ]; then echo "Plugin not found" >&2; exit 1; fi\n` : "";
     writeFileSync(join(bin, "claude"), `#!/bin/sh\necho "$@" >> "${calls}"\nif [ "$1 $2" = "mcp get" ]; then ${get}; fi\n${listed}${fails}exit 0\n`);
     chmodSync(join(bin, "claude"), 0o755);
@@ -48,7 +69,7 @@ async function runLogin(opts: { claude: "registered" | "local" | "unregistered" 
         "@echo off",
         `>>"${calls}" echo %*`,
         `if "%1 %2"=="mcp get" goto get`,
-        ...(opts.plugin === "installed" ? [`if "%1 %2"=="plugin list" echo   cheapag@cheapag`, `if "%1 %2 %3"=="plugin marketplace list" echo   cheapag`] : []),
+        ...(opts.plugin === "installed" ? [`if "%1 %2"=="plugin list" echo   cheapag@cheap-agent-custom-endpoints`, `if "%1 %2 %3"=="plugin marketplace list" echo   cheap-agent-custom-endpoints`] : []),
         ...(opts.plugin === "fails" ? [`if "%1 %2"=="plugin install" goto fail`] : []),
         "exit /b 0",
         ":get",
@@ -99,7 +120,7 @@ async function scriptedLogin(args: string[]) {
 
 const ADD = `mcp add -s user cheapag -- ${process.execPath} ${serverEntry}`;
 /** The plugin steps on a machine without it (ticket 31). */
-const PLUGIN = (marketplace: string) => ["plugin marketplace list", "plugin list", `plugin marketplace add ${marketplace}`, "plugin install cheapag@cheapag"];
+const PLUGIN = (marketplace: string) => ["plugin marketplace list", "plugin list", `plugin marketplace add ${marketplace}`, "plugin install cheapag@cheap-agent-custom-endpoints"];
 
 tty("login saves the key through the bundled OpenCode, live-checks it, and registers at user scope on yes", async () => {
   const r = await runLogin({ claude: "unregistered", register: "y" });
@@ -120,13 +141,13 @@ tty("login saves the key through the bundled OpenCode, live-checks it, and regis
   expect(r.output).toContain("3) strongest");
   expect(r.output).toContain("4) custom (set models yourself in cheapag.json)");
   expect(r.output).toContain("Models [1-4, Enter = balanced]:");
-  expect(r.config).toEqual({ models: PRESETS.openrouter.balanced });
+  expect(r.config).toEqual({ provider: "openrouter", models: PRESETS.openrouter.balanced });
 }, slow(90_000));
 
 tty("picking strongest writes its models to the user config, and the live check runs its implement model", async () => {
   const r = await runLogin({ claude: "registered", preset: "strongest" });
   expect(r.exit).toBe("EXIT 0");
-  expect(r.config).toEqual({ models: PRESETS.openrouter.strongest });
+  expect(r.config).toEqual({ provider: "openrouter", models: PRESETS.openrouter.strongest });
   expect(r.fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "z-ai/glm-5.3" });
   expect(r.output).toContain("✓ openrouter/z-ai/glm-5.3 answered");
 }, slow(90_000));
@@ -134,7 +155,7 @@ tty("picking strongest writes its models to the user config, and the live check 
 tty("a number on the worker-models list picks that preset: 3 is strongest", async () => {
   const r = await runLogin({ claude: "registered", preset: "3" });
   expect(r.exit).toBe("EXIT 0");
-  expect(r.config).toEqual({ models: PRESETS.openrouter.strongest });
+  expect(r.config).toEqual({ provider: "openrouter", models: PRESETS.openrouter.strongest });
   expect(r.fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "z-ai/glm-5.3" });
 }, slow(90_000));
 
@@ -142,14 +163,14 @@ tty("re-running login offers the current preset; Enter keeps it and the config's
   const r = await runLogin({ claude: "registered", config: { test_cmd: "make check", models: PRESETS.openrouter.strongest } });
   expect(r.exit).toBe("EXIT 0");
   expect(r.output).toContain("Models [1-4, Enter = strongest]");
-  expect(r.config).toEqual({ test_cmd: "make check", models: PRESETS.openrouter.strongest });
+  expect(r.config).toEqual({ provider: "openrouter", test_cmd: "make check", models: PRESETS.openrouter.strongest });
 }, slow(90_000));
 
 tty("--preset sets the models without asking; an answer that is no preset changes nothing", async () => {
   const r = await runLogin({ claude: "registered", args: ["--preset", "cheapest"] });
   expect(r.exit).toBe("EXIT 0");
   expect(r.output).not.toContain("Worker models:\n");
-  expect(r.config).toEqual({ models: PRESETS.openrouter.cheapest });
+  expect(r.config).toEqual({ provider: "openrouter", models: PRESETS.openrouter.cheapest });
   const bad = await runLogin({ claude: "registered", preset: "fastest" });
   expect(bad.exit).toMatch(/^EXIT 1 UNMATCHED/); // never got to the key
   expect(bad.output).toContain('✗ "fastest" is not one of cheapest, balanced, strongest, custom; nothing changed');
@@ -222,11 +243,11 @@ tty("the plugin is generated from the package: hooks and commands call the launc
   expect(hooks).toContain(`node '${r.launcher}' hook context`);
   expect(readFileSync(join(plugin, "skills", "allow", "SKILL.md"), "utf8")).toContain(`allowed-tools: Bash(node '${r.launcher}' allow) Bash(node '${r.launcher}' allow *)`);
   expect(existsSync(join(plugin, ".mcp.json"))).toBe(false); // the server is registered at user scope instead
-  expect(JSON.parse(readFileSync(join(r.marketplace, ".claude-plugin", "marketplace.json"), "utf8"))).toMatchObject({ name: "cheapag", plugins: [{ name: "cheapag", source: "./cheapag" }] });
+  expect(JSON.parse(readFileSync(join(r.marketplace, ".claude-plugin", "marketplace.json"), "utf8"))).toMatchObject({ name: "cheap-agent-custom-endpoints", plugins: [{ name: "cheapag", source: "./cheapag" }] });
   // the launcher runs this install, falling back to the pinned npm version
   const launcher = readFileSync(r.launcher, "utf8");
   expect(launcher).toContain(JSON.stringify(serverEntry));
-  expect(launcher).toMatch(/npx -y cheap-agent@\d+\.\d+\.\d+/);
+  expect(launcher).toContain("npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main");
   expect(launcher).toContain('process.argv[2] === "hook" && process.argv[3] === "guard"');
   expect(launcher).toContain("pathToFileURL");
   const context = await promisify(execFile)(process.execPath, [r.launcher, "hook", "context"], { encoding: "utf8" });
@@ -235,10 +256,10 @@ tty("the plugin is generated from the package: hooks and commands call the launc
 
 tty("re-running setup updates the plugin it installed; a failed plugin step prints the commands to run", async () => {
   const again = await runLogin({ claude: "registered", plugin: "installed" });
-  expect(again.claudeCalls).toEqual(["mcp get cheapag", "plugin marketplace list", "plugin list", "plugin marketplace update cheapag", "plugin update cheapag@cheapag"]);
+  expect(again.claudeCalls).toEqual(["mcp get cheapag", "plugin marketplace list", "plugin list", "plugin marketplace update cheap-agent-custom-endpoints", "plugin update cheapag@cheap-agent-custom-endpoints"]);
   const failed = await runLogin({ claude: "registered", plugin: "fails" });
   expect(failed.exit).toBe("EXIT 0");
-  expect(failed.output).toContain(`✗ claude plugin install cheapag@cheapag failed (Plugin not found). Run these yourself:\n  claude plugin marketplace add ${failed.marketplace}\n  claude plugin install cheapag@cheapag`);
+  expect(failed.output).toContain(`✗ claude plugin install cheapag@cheap-agent-custom-endpoints failed (Plugin not found). Run these yourself:\n  claude plugin marketplace add ${failed.marketplace}\n  claude plugin install cheapag@cheap-agent-custom-endpoints`);
   expect(failed.output).toContain("add the plugin with the commands above");
 }, slow(120_000));
 
@@ -263,7 +284,7 @@ tty("npx cheap-agent with a saved provider updates without asking and registers 
   expect(r.output).toContain("✓ Updated the cheapag plugin to ");
   expect(r.output).not.toContain("Added the cheapag plugin");
   expect(r.output).not.toContain("run /cheapag:allow");
-  expect(r.output).toContain("Restart Claude Code to load it. To change provider or models: npx cheap-agent login");
+  expect(r.output).toContain("Restart Claude Code to load it. To change provider or models: npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login");
   expect(r.claudeCalls).toEqual(["mcp get cheapag", ...PLUGIN(r.marketplace)]);
 }, slow(90_000));
 
@@ -282,14 +303,14 @@ tty("without the claude CLI, login prints the command to run", async () => {
 tty("a failed live check explains the fix, keeps the saved login, and does not offer registration", async () => {
   const r = await runLogin({ claude: "unregistered", check: [{ error: { name: "APIError", message: "401 Missing Authentication header" } }] });
   expect(r.exit).toBe("EXIT 1");
-  expect(r.output).toContain("✗ the key was rejected (401 Missing Authentication header); run npx cheap-agent login again with the right key");
+  expect(r.output).toContain("✗ the key was rejected (401 Missing Authentication header); run npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login again with the right key");
   expect(r.saved).toEqual(["openrouter"]);
   expect(r.claudeCalls).toEqual([]);
 }, slow(90_000));
 
 tty.each([
-  ["no credit", "402 Insufficient credits", "✗ the account has no credit (402 Insufficient credits); top it up, then run npx cheap-agent login again"],
-  ["an unavailable model", "404 No endpoints found for deepseek/deepseek-v4.1-flash", "✗ openrouter/deepseek/deepseek-v4.1-flash is unavailable to this account (404 No endpoints found for deepseek/deepseek-v4.1-flash); run npx cheap-agent login and pick another provider"],
+  ["no credit", "402 Insufficient credits", "✗ the account has no credit (402 Insufficient credits); top it up, then run npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login again"],
+  ["an unavailable model", "404 No endpoints found for deepseek/deepseek-v4.1-flash", "✗ openrouter/deepseek/deepseek-v4.1-flash is unavailable to this account (404 No endpoints found for deepseek/deepseek-v4.1-flash); run npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login and pick another provider"],
 ] as const)("a live check failing on %s says why and what to do", async (_, message, expected) => {
   const r = await runLogin({ claude: "unregistered", check: [{ error: { name: "APIError", message } }] });
   expect(r.exit).toBe("EXIT 1");
@@ -308,7 +329,7 @@ test("login refuses a non-interactive stdin instead of hanging", async () => {
   const { env } = hermeticHome();
   const r = await promisify(execFile)(process.execPath, [serverEntry, "login"], { env, encoding: "utf8" }).catch((e) => e);
   expect(r.code).toBe(1);
-  expect(r.stdout).toBe("✗ npx cheap-agent login needs an interactive terminal (the key is typed into a hidden prompt)\n");
+  expect(r.stdout).toBe("✗ npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login needs an interactive terminal (the key is typed into a hidden prompt)\n");
 });
 
 tty("re-running login adds a provider; the earlier one keeps precedence and that is said", async () => {

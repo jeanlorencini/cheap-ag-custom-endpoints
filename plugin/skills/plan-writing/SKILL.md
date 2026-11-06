@@ -72,3 +72,5 @@ done-when: section "Rate limits" exists under /api/login
 - `steps="3"`: one step, one job. `steps="3-5"`: a range, run in order in one job. `steps="1-2,3"`: comma-separated groups, run in parallel unless their `files:` overlap or `needs:` orders them.
 - `delegate(plan=".plan/rate-limit.md", steps="1-2,3")`
 - `delegate(plan=".plan/rate-limit.md", steps="2", note="use the existing ipFrom(req) helper")`: a `note` is at most 300 characters, for one-off guidance.
+
+Use `kind: feature` for new behavior and `kind: fix` for a bug repair. Explicit intent prevents error-handling features from being mistaken for fixes; fixes still need a failing reproduction.

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { providerLabel, type Provider } from "./credentials.js";
 import type { RunResult, Session } from "./worker.js";
+import { customProviderId, requireCustomEndpoint } from "./custom-endpoint.js";
 
 /** Routing: which model each role runs, fallbacks on provider limits, escalation eligibility, and the local spend ledger. */
 
@@ -19,7 +20,7 @@ const OPENROUTER_PRIVATE = { provider: { data_collection: "deny", sort: "through
  * Go and DeepSeek ids are in OpenCode 1.19.0's bundled model catalog; OpenRouter's are on openrouter.ai/api/v1/models
  * (checked 2026-10-16). Direct DeepSeek has no other models to fall back to.
  */
-export const ROLES: Record<ProviderId, { implement: string[]; research: string[]; escalation: string }> = {
+export const ROLES: Record<Exclude<ProviderId, "custom">, { implement: string[]; research: string[]; escalation: string }> = {
   "opencode-go": {
     implement: ["deepseek-v4.1-flash", "qwen3.7-plus", "glm-5.3", "kimi-k3"],
     research: ["qwen3.8-flash", "deepseek-v4.1-flash"],
@@ -42,7 +43,7 @@ export type Preset = (typeof PRESET_NAMES)[number];
 // balanced is the default route, Flash for every tier: GLM-5.3 cost Claude 1.5x fewer tokens than Flash on the tasks Flash
 // lost (ticket 25) but showed no gain on the hard tier (26), so it is opt-in as strongest. cheapest is balanced until a
 // cheaper worker than Flash exists (a tie reports balanced). Kimi K3 was dropped: $0.36 worker per task, BUDGET on half.
-export const PRESETS: Record<ProviderId, Record<Preset, ModelsConfig>> = {
+export const PRESETS: Record<Exclude<ProviderId, "custom">, Record<Preset, ModelsConfig>> = {
   "opencode-go": {
     cheapest: { implement: "opencode-go/deepseek-v4.1-flash" },
     balanced: { implement: "opencode-go/deepseek-v4.1-flash" },
@@ -69,12 +70,14 @@ export const PRESETS: Record<ProviderId, Record<Preset, ModelsConfig>> = {
 
 /** The preset whose route `models` gives on this provider, else custom (`preset=` in ping and status); a tie names balanced, the default. */
 export function presetOf(provider: ProviderId, models: ModelsConfig = {}): Preset | "custom" {
+  if (provider === "custom") return "custom";
   const key = (m: ModelsConfig) => JSON.stringify(fullRoute(provider, m));
   return (["balanced", "cheapest", "strongest"] as const).find((p) => key(PRESETS[provider][p]) === key(models)) ?? "custom";
 }
 
-const model = (provider: ProviderId, id: string): WorkerModel =>
-  provider === "openrouter" ? { providerID: provider, id, options: OPENROUTER_PRIVATE } : { providerID: provider, id };
+const model = (provider: ProviderId, id: string): WorkerModel => provider === "custom"
+  ? { providerID: customProviderId(requireCustomEndpoint()), id }
+  : provider === "openrouter" ? { providerID: provider, id, options: OPENROUTER_PRIVATE } : { providerID: provider, id };
 
 /**
  * The models one job may run. `fallbacks` continue the session, in order, when the current model hits a provider limit;
@@ -98,7 +101,8 @@ export const tierModel = (r: Route, d?: Difficulty) => (d === "hard" ? r.hard ??
 
 /** Every model a provider's worker may run, defaults overridden by the config, before the repo's allowlist filters them. */
 export function fullRoute(provider: ProviderId, models: ModelsConfig = {}): Route {
-  const roles = ROLES[provider];
+  const custom = provider === "custom" ? requireCustomEndpoint() : undefined;
+  const roles = custom ? { implement: [custom.model], research: [custom.model], escalation: custom.model } : ROLES[provider as Exclude<ProviderId, "custom">];
   const own = (name?: string) => (name?.startsWith(`${provider}/`) ? name.slice(provider.length + 1) : undefined);
   const ownFallbacks = models.fallback?.map(own).filter((id): id is string => !!id);
   const [research, ...researchFallbacks] = [own(models.research) ?? roles.research[0], ...roles.research.slice(1)];
@@ -119,7 +123,7 @@ export const routeModels = (r: Route) => unique([r.implement, r.medium, r.hard, 
 
 const unique = (ms: (WorkerModel | undefined)[]) => ms.filter((m, i): m is WorkerModel => !!m && ms.findIndex((o) => o && modelName(o) === modelName(m)) === i);
 
-export const modelName = (m: WorkerModel) => `${m.providerID}/${m.id}`;
+export const modelName = (m: WorkerModel) => `${/^cheapag-custom-[a-f0-9]{32}$/.test(m.providerID) ? "custom" : m.providerID}/${m.id}`;
 
 /** What one run hit instead of finishing: a provider limit (Go window, free tier, or a plain rate limit), from OpenCode's retry status. */
 export type Limit = { model: string; reason?: string; message: string; next: number };

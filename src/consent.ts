@@ -1,3 +1,4 @@
+import { NPX } from "./distribution.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { providerLabel, type Provider } from "./credentials.js";
@@ -5,6 +6,7 @@ import { failBlock, renderConsent } from "./report.js";
 import { loadConfig } from "./config.js";
 import { fullRoute, modelName, presetOf, routeModels, type Route, type WorkerModel } from "./routing.js";
 import { projectRoot } from "./workspace.js";
+import { customProviderId, requireCustomEndpoint } from "./custom-endpoint.js";
 
 /**
  * Consent: nothing leaves the repo until the developer opts in with `cheapag allow` (spec: Consent, A21).
@@ -13,7 +15,7 @@ import { projectRoot } from "./workspace.js";
 
 export type ConsentMode = "all" | "zdr-only" | "models";
 /** `route`: the models the CONSENT block listed when all or zero-retention was given; a preset or `models` change that alters it asks again. */
-export type Consent = { mode: ConsentMode; provider: Provider["provider"]; models?: string[]; route?: string[]; approvedAt: string };
+export type Consent = { mode: ConsentMode; provider: Provider["provider"]; models?: string[]; route?: string[]; endpoint?: string; approvedAt: string };
 
 const file = (root: string) => join(root, ".cheapag", "consent.json");
 
@@ -34,7 +36,8 @@ export function writeConsent(root: string, consent: Consent) {
   mkdirSync(join(root, ".cheapag"), { recursive: true });
   // an explicit model list bounds the recipients by itself; the other modes are tied to the route they were shown
   const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root)));
-  writeFileSync(file(root), JSON.stringify({ ...consent, route }, null, 2) + "\n");
+  const endpoint = consent.provider === "custom" ? customProviderId(requireCustomEndpoint()) : undefined;
+  writeFileSync(file(root), JSON.stringify({ ...consent, route, endpoint }, null, 2) + "\n");
 }
 
 const routeNames = (r: Route) => routeModels(r).map(modelName);
@@ -88,7 +91,8 @@ export function consentGate(root: string, provider: Provider["provider"]): { blo
   const consent = readConsent(root);
   const full = fullRoute(provider, configuredModels(root));
   // consent names the provider it was given for: a new login elsewhere needs a new opt-in; so does another route
-  if (!consent || consent.provider !== provider || routeMoved(root, consent)) return { block: consentBlock(root, provider, full) };
+  const endpointMoved = provider === "custom" && consent?.endpoint !== customProviderId(requireCustomEndpoint());
+  if (!consent || consent.provider !== provider || endpointMoved || routeMoved(root, consent)) return { block: consentBlock(root, provider, full) };
   const zdr = consent.mode === "zdr-only" && provider === "openrouter";
   const pick = (ms: (WorkerModel | undefined)[]) => ms.filter((m): m is WorkerModel => !!m && allowed(provider, consent, m)).map((m) => (zdr ? withZdr(m) : m));
   const [implement, ...fallbacks] = pick([full.implement, ...full.fallbacks, full.escalation]);
@@ -137,6 +141,6 @@ function consentBlock(root: string, provider: Provider["provider"], full: Route)
     repo: basename(root),
     send: `code from this repo → ${providerLabel(provider)}: ${ids}`,
     retention: retentionLine,
-    approve: "ask the user to run /cheapag:allow in Claude Code, or npx cheap-agent allow in a terminal (Codex); add --zdr-only to limit it to zero-retention models, or --models a,b; never approve yourself",
+    approve: `ask the user to run /cheapag:allow in Claude Code, or ${NPX} allow in a terminal (Codex); add --zdr-only to limit it to zero-retention models, or --models a,b; never approve yourself`,
   });
 }

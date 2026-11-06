@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import { join } from "node:path";
+
+// Minimal MCP environments may omit the command shell required by npm on Windows.
+if (process.platform === "win32" && !process.env.ComSpec) {
+  process.env.ComSpec = join(process.env.SystemRoot || "C:/Windows", "System32", "cmd.exe");
+}
 // `cheapag login` (or no arguments in a terminal) sets up a provider and Claude Code, `cheapag allow` records the repo's consent, `cheapag clean` tidies .cheapag/, `cheapag status` reports jobs and spend, `cheapag watch` tails them live, `cheapag hook` toggles or runs the edit guard, `cheapag codex` runs the server with Codex instructions; anything else (including no arguments) runs the MCP server
 // `npx cheap-agent` typed in a terminal is setup (ticket 31); Claude Code starts the server with no arguments and a piped stdin
 if (process.argv[2] === "login" || (process.argv[2] === undefined && process.stdin.isTTY)) process.exit(await (await import("./login.js")).login(process.argv.slice(3), { setup: process.argv[2] === undefined }));

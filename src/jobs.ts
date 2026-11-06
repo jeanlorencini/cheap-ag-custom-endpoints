@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realp
 import { isAbsolute, join, relative } from "node:path";
 import { redact, type Provider } from "./credentials.js";
 import { holdOpencode, type Opencode } from "./opencode.js";
-import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, type Plan, type PlanStep } from "./plan.js";
+import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, type Plan, type PlanStep, type TaskKind } from "./plan.js";
 import { failBlock, renderBatch, renderJob, type BatchRecord, type JobRecord } from "./report.js";
 import { loadConfig, type Config } from "./config.js";
 import { projectScripts, workerRuleset } from "./permissions.js";
@@ -37,13 +37,13 @@ const TURN_SCALE: Record<Difficulty, number> = { easy: 1, medium: 2, hard: 3 };
 /** The turn cap for the escalation attempt after a turn-cap stop: its own, smaller budget (ticket 33). */
 const ESC_TURNS = 15;
 /** Fail fast applies only to fixes (ticket 37): a step or source naming any of these is a bug to reproduce first. */
-const FIX_WORDS = /\b(bug|fix(?:es|ed|ing)?|fail(?:s|ed|ing|ure)?|error|crash(?:es|ed)?|regress(?:ion|ed)?|broken|incorrect|wrong|traceback|exception)\b/i;
+const FIX_WORDS = /\b(bug|fix(?:es|ed|ing)?|fail(?:s|ed|ing|ure)?|crash(?:es|ed)?|regress(?:ion|ed)?|broken|incorrect|wrong|traceback)\b/i;
 
 /**
  * `brief`: a research scout brief (ticket 23.4), resolved to its text, handed to every worker of the delegation.
  * `source`: the user's request or the issue, verbatim (ticket 28), so the worker can check the step against it.
  */
-export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty };
+export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty; kind?: TaskKind };
 /** What the tool takes: a plan file and steps, or (one step, no plan file) an inline task with optional files and done-when. */
 export type DelegateRequest = Partial<DelegateInput> & { task?: string; files?: string; done_when?: string };
 
@@ -107,8 +107,8 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (req.task !== undefined) {
     const made = inlinePlan(root, req);
     if ("fail" in made) return failBlock(made.fail);
-    input = { plan: made.plan, steps: "1", note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty };
-  } else if (req.plan && req.steps) input = { plan: req.plan, steps: req.steps, note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty };
+    input = { plan: made.plan, steps: "1", note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, kind: req.kind };
+  } else if (req.plan && req.steps) input = { plan: req.plan, steps: req.steps, note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, kind: req.kind };
   else return failBlock("give task (what to change, files, how to check), or plan and steps");
   // only the caller's path: an inline task's own plan lives under .cheapag/plans/
   if (req.task === undefined && input.plan.split(/[\\/]/).filter((p) => p && p !== ".")[0] === ".cheapag") return failBlock(`plan ${input.plan} is under .cheapag/, Cheap Agent's state folder, which workers cannot see; save plans under .plan/`);
@@ -269,7 +269,11 @@ function runGroup(g: GroupRun) {
   // takes over without a 40-turn failed job in its context (v2 hard tier: FAIL sessions averaged 482k Claude tokens, stock 385k)
   // shortcut: counts any test file in the worktree's status, carried-over dirty ones included; tighten to the job's own edits if that misfires
   // ticket 37: only a fix has a bug to reproduce; a feature step is never stopped for lacking a test
-  const isFix = g.fix || FIX_WORDS.test([...steps.map((s) => `${s.title} ${s.fields.do ?? ""}`), input.source ?? ""].join("\n"));
+  const isFix = g.fix || steps.some(step => {
+    const kind = step.fields.kind ?? input.kind;
+    if (kind) return kind === "fix";
+    return FIX_WORDS.test(`${step.title} ${step.fields.do ?? ""}\n${input.source ?? ""}`);
+  });
   let reproSeen = false;
   let carried = new Set<string>(); // paths already dirty when the worktree opened (carried over from the repo): not the worker's edits
   const dirty = () => git(worktree!.path, ["status", "--porcelain"]).split("\n").map((l) => l.slice(3).trim()).filter(Boolean);

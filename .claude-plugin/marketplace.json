@@ -1,7 +1,9 @@
 {
-  "name": "cheap-agent",
-  "description": "Cheap Agent: your frontier model plans and reviews while a cheaper model implements, over MCP.",
-  "owner": { "name": "muaaz9329" },
+  "name": "cheap-agent-custom-endpoints",
+  "description": "Cheap Agent with native custom OpenAI-compatible endpoints",
+  "owner": {
+    "name": "jeanlorencini"
+  },
   "plugins": [
     {
       "name": "cheapag",

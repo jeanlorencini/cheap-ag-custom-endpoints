@@ -1,3 +1,4 @@
+import { PACKAGE_SPEC } from "./distribution.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -5,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { loadConfig, userConfigFile } from "./config.js";
-import { detectProvider, LOGIN_COMMAND as LOGIN, PROVIDERS, providerLabel as label, redact, savedProviders, type Provider } from "./credentials.js";
+import { detectProvider, hasSavedLogin, LOGIN_COMMAND as LOGIN, PROVIDERS, providerLabel as label, redact, savedProviders, type Provider } from "./credentials.js";
+import { customEndpoint, customProviderConfig, customProviderId, saveCustomEndpoint, selectProvider, validateCustomEndpoint } from "./custom-endpoint.js";
 import { ensureOpencode, opencodeBinary, stopOpencode } from "./opencode.js";
 import { runCli } from "./platform.js";
 import { installPlugin, stableNode } from "./install.js";
@@ -70,6 +72,10 @@ export async function login(args: string[] = [], { setup = false }: { setup?: bo
     out(`✗ "${answer}" is not one of 1-${PROVIDERS.length}; nothing changed`);
     return 1;
   }
+  if (picked.id === "custom") {
+    if (flag !== undefined && flag !== "custom") { out("Custom endpoints use an explicit model ID, not a built-in preset; use --preset custom."); return 1; }
+    return loginCustom(out);
+  }
   const preset = currentPreset(picked.id) ?? "balanced";
   let choice = flag ?? "";
   if (flag === undefined) {
@@ -91,6 +97,7 @@ export async function login(args: string[] = [], { setup = false }: { setup?: bo
     out(`✗ ${picked.label} login was not saved; run ${LOGIN} to try again`);
     return 1;
   }
+  selectProvider(picked.id);
   if (!savePreset(picked.id, choice, out)) return 1;
 
   const provider: Provider = { provider: picked.id, via: "login" };
@@ -134,6 +141,7 @@ function savePreset(provider: Provider["provider"], choice: Choice, out: (line?:
     out(`Worker models: custom, nothing written; set "models" in a repo's cheapag.json, or in ${file} for every repo`);
     return true;
   }
+  if (provider === "custom") { out("Custom endpoints use their configured model; use --preset custom."); return false; }
   try {
     const config = { ...readUser(), models: PRESETS[provider][choice] };
     mkdirSync(dirname(file), { recursive: true });
@@ -144,6 +152,41 @@ function savePreset(provider: Provider["provider"], choice: Choice, out: (line?:
   }
   out(`✓ Worker models: ${choice} (implement ${PRESETS[provider][choice].implement}), saved in ${file}`);
   return true;
+}
+
+async function loginCustom(out: (line?: string) => void): Promise<number> {
+  let previous;
+  try { previous = customEndpoint(); } catch {}
+  let endpoint;
+  try {
+    const url = await ask("Endpoint base URL (include /v1 if required): ");
+    const model = await ask("Model ID: ");
+    endpoint = validateCustomEndpoint(url || previous?.baseURL, model || previous?.model);
+  } catch {
+    out("Invalid custom endpoint. Use HTTPS (or HTTP loopback), no URL credentials/query/fragment, and a non-empty model ID.");
+    return 1;
+  }
+  const id = customProviderId(endpoint);
+  const dir = mkdtempSync(join(tmpdir(), "cheapag-auth-"));
+  let saved;
+  try {
+    saved = spawnSync(opencodeBinary(), ["auth", "login", "--provider", id], {
+      stdio: "inherit", cwd: dir,
+      env: {
+        ...process.env,
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: [id], provider: { [id]: customProviderConfig(endpoint) } }),
+      },
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  if (saved.status !== 0 || !hasSavedLogin(id)) { out("Custom endpoint login was not saved; try again."); return 1; }
+  saveCustomEndpoint(endpoint);
+  const check = await liveCheck({ provider: "custom", via: "login" });
+  out(check.ok ? `✓ ${check.line}` : `✗ ${check.line}`);
+  if (!check.ok) return 1;
+  out("Custom endpoint saved. Each repository must consent to this endpoint before code is sent.");
+  await register(out);
+  return 0;
 }
 
 /** One tiny real call to the implement model the user's config now picks, through the bundled OpenCode, in a throwaway directory. */
@@ -268,7 +311,7 @@ function finish(out: (line?: string) => void, plugin: boolean) {
 /** How Claude Code should start this installed package: npx when run from npx's cache, else this exact file. */
 function serverCommand() {
   const entry = realpathSync(process.argv[1]);
-  return entry.split(sep).includes("_npx") ? ["npx", "-y", `cheap-agent@${version}`] : [stableNode(), entry];
+  return entry.split(sep).includes("_npx") ? ["npx", "-y", PACKAGE_SPEC] : [stableNode(), entry];
 }
 
 // double quotes on Windows: cmd and PowerShell don't treat single quotes as quoting

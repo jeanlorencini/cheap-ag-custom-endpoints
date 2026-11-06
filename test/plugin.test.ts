@@ -1,3 +1,4 @@
+const PACKAGE_SPEC = "github:jeanlorencini/cheap-ag-custom-endpoints#main";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -19,7 +20,7 @@ function skill(name: string) {
 
 test("marketplace lists the plugin from this repo, and the manifests agree on name and version", () => {
   const market = json(join(repo, ".claude-plugin", "marketplace.json"));
-  expect(market).toMatchObject({ name: "cheap-agent", owner: { name: expect.any(String) } });
+  expect(market).toMatchObject({ name: "cheap-agent-custom-endpoints", owner: { name: expect.any(String) } });
   expect(market.plugins).toEqual([expect.objectContaining({ name: "cheapag", source: "./plugin" })]);
   expect(json(join(plugin, ".claude-plugin", "plugin.json"))).toMatchObject({ name: "cheapag", version });
   expect(json(join(plugin, ".codex-plugin", "plugin.json"))).toMatchObject({
@@ -31,15 +32,15 @@ test("marketplace lists the plugin from this repo, and the manifests agree on na
   });
 });
 
-test("the MCP entry and every command run exactly this package version, so the pin cannot drift", () => {
-  expect(json(join(plugin, ".mcp.json"))).toEqual({ mcpServers: { cheapag: { command: "npx", args: ["-y", `cheap-agent@${version}`] } } });
+test("the MCP entry and every command use the fork Git package spec instead of the upstream npm package", () => {
+  expect(json(join(plugin, ".mcp.json"))).toEqual({ mcpServers: { cheapag: { command: "npx", args: ["-y", PACKAGE_SPEC] } } });
   expect(json(join(plugin, "codex.mcp.json"))).toEqual({
-    mcpServers: { cheapag: { command: "npx", args: ["-y", `cheap-agent@${version}`, "codex"], omit_tools_from: ["code_mode", "deferred"] } },
+    mcpServers: { cheapag: { command: "npx", args: ["-y", PACKAGE_SPEC, "codex"], omit_tools_from: ["code_mode", "deferred"] } },
   });
   const files = readdirSync(plugin, { recursive: true, withFileTypes: true }).filter((f) => f.isFile());
-  const pins = files.flatMap((f) => readFileSync(join(f.parentPath, f.name), "utf8").match(/cheap-agent@[^\s`"')]+/g) ?? []);
+  const pins = files.flatMap((f) => readFileSync(join(f.parentPath, f.name), "utf8").match(/github:[^\s`"\x27)]+/g) ?? []);
   expect(pins.length).toBeGreaterThan(3);
-  expect(new Set(pins)).toEqual(new Set([`cheap-agent@${version}`]));
+  expect(new Set(pins)).toEqual(new Set([PACKAGE_SPEC]));
 });
 
 test("skills: plan-writing for Claude; status, and user-only allow, clean and hook wrapping the CLI", () => {
@@ -50,7 +51,7 @@ test("skills: plan-writing for Claude; status, and user-only allow, clean and ho
   for (const rule of ["files:", "done-when:", "dont:", "needs:", "deps:", "## 1 ", "Size", "Grouping", "Packages", "never the whole suite"]) expect(plan.body).toContain(rule);
   for (const rule of ["Trust OK", "After a FAIL"]) expect(plan.body).not.toContain(rule); // the rules live in the server instructions only
 
-  const pin = `npx -y cheap-agent@${version}`;
+  const pin = `npx -y ${PACKAGE_SPEC}`;
   const status = skill("status");
   expect(status.front["disable-model-invocation"]).toBeUndefined();
   expect(status.body).toContain(`!\`${pin} status\``);
@@ -81,17 +82,17 @@ test("the guard hooks: PreToolUse on every tool behind a shell test that skips n
   const hooks = json(join(plugin, "hooks", "hooks.json"));
   expect(Object.keys(hooks.hooks).sort()).toEqual(["PostToolUse", "PreToolUse", "SessionStart"]);
   // SessionStart puts the delegation rule into the session's context (benchmark run 2: MCP instructions alone were not enough)
-  expect(hooks.hooks.SessionStart).toEqual([{ hooks: [{ type: "command", command: `npx -y cheap-agent@${version} hook context`, timeout: expect.any(Number) }] }]);
+  expect(hooks.hooks.SessionStart).toEqual([{ hooks: [{ type: "command", command: `npx -y ${PACKAGE_SPEC} hook context`, timeout: expect.any(Number) }] }]);
   // ticket 29: every tool, since the take-over budget counts Reads and Bash too
   expect(hooks.hooks.PreToolUse).toEqual([{ matcher: "*", hooks: [{ type: "command", command: expect.any(String), timeout: expect.any(Number) }] }]);
   const { command } = hooks.hooks.PreToolUse[0].hooks[0];
-  expect(command).toBe(`r=$(git rev-parse --show-toplevel 2>/dev/null) && { [ -f "$r/.cheapag/hook.json" ] || [ -f "$r/.cheapag/hook/takeover" ]; } && npx -y cheap-agent@${version} hook guard; exit 0`);
-  expect(hooks.hooks.PostToolUse).toEqual([{ matcher: "mcp__.*cheapag__(delegate|jobs|reply|land)", hooks: [{ type: "command", command: `npx -y cheap-agent@${version} hook result; exit 0`, timeout: expect.any(Number) }] }]);
+  expect(command).toBe(`r=$(git rev-parse --show-toplevel 2>/dev/null) && { [ -f "$r/.cheapag/hook.json" ] || [ -f "$r/.cheapag/hook/takeover" ]; } && npx -y ${PACKAGE_SPEC} hook guard; exit 0`);
+  expect(hooks.hooks.PostToolUse).toEqual([{ matcher: "mcp__.*cheapag__(delegate|jobs|reply|land)", hooks: [{ type: "command", command: `npx -y ${PACKAGE_SPEC} hook result; exit 0`, timeout: expect.any(Number) }] }]);
 });
 
 test("the Codex plugin loads the shared hooks file, since Codex ignores any other hooks path", () => {
   expect(json(join(plugin, ".codex-plugin", "plugin.json")).hooks).toBe("./hooks/hooks.json");
-  expect(json(join(plugin, "hooks", "hooks.json")).hooks.SessionStart).toEqual([{ hooks: [{ type: "command", command: `npx -y cheap-agent@${version} hook context`, timeout: expect.any(Number) }] }]);
+  expect(json(join(plugin, "hooks", "hooks.json")).hooks.SessionStart).toEqual([{ hooks: [{ type: "command", command: `npx -y ${PACKAGE_SPEC} hook context`, timeout: expect.any(Number) }] }]);
 });
 
 test("the progress mod is Claude-only: named by the Claude manifest, never in the hooks file Codex reads", () => {

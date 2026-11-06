@@ -106,6 +106,8 @@ export function tempRepo(state: RepoState = "clean") {
     execFileSync("git", ["-c", "user.name=cheapag-test", "-c", "user.email=test@cheapag.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, stdio: "pipe" }).toString();
 
   git("init", "-q", "-b", "main");
+  // Fixture results must not depend on the developer's Windows checkout settings.
+  git("config", "core.autocrlf", "false");
   // as a set-up repo would be, so results carry no gitignore hint (test/cleanup.test.ts clears this to see it)
   appendFileSync(join(dir, ".git", "info", "exclude"), ".cheapag/\n");
   writeFileSync(join(dir, "README.md"), "# fixture\n");

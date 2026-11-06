@@ -1,3 +1,5 @@
+const PACKAGE_SPEC = "github:jeanlorencini/cheap-ag-custom-endpoints#main";
+const NPX = "npx -y " + PACKAGE_SPEC;
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,8 +15,8 @@ import { hermeticHome, serverEntry, slow, tempRepo } from "./harness.js";
 const repoDir = join(import.meta.dirname, "..");
 const { version } = JSON.parse(readFileSync(join(repoDir, "package.json"), "utf8"));
 const hooks = JSON.parse(readFileSync(join(repoDir, "plugin", "hooks", "hooks.json"), "utf8"));
-const command = (hooks.hooks.PreToolUse[0].hooks[0].command as string).replace(`npx -y cheap-agent@${version}`, `"${process.execPath}" "${serverEntry}"`);
-const resultCommand = (hooks.hooks.PostToolUse[0].hooks[0].command as string).replace(`npx -y cheap-agent@${version}`, `"${process.execPath}" "${serverEntry}"`);
+const command = (hooks.hooks.PreToolUse[0].hooks[0].command as string).replace(`npx -y ${PACKAGE_SPEC}`, `"${process.execPath}" "${serverEntry}"`);
+const resultCommand = (hooks.hooks.PostToolUse[0].hooks[0].command as string).replace(`npx -y ${PACKAGE_SPEC}`, `"${process.execPath}" "${serverEntry}"`);
 const lines = (n: number, tag = "x") => Array.from({ length: n }, (_, i) => `${tag}${i}`).join("\n") + "\n";
 /** A Codex apply_patch: sections are `*** Update File:`/`*** Add File:`/`*** Delete File:` with their hunks. */
 const applyPatch = (...sections: string[]) => ["*** Begin Patch", ...sections, "*** End Patch"].join("\n") + "\n";
@@ -159,7 +161,7 @@ function contextOut(cache: { checked: number; latest: string }, extraEnv: Record
   onTestFinished(() => rmSync(home, { recursive: true, force: true }));
   const dir = join(home, "config", "cheapag");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "update-check.json"), JSON.stringify(cache));
+  writeFileSync(join(dir, "custom-endpoints-update-check.json"), JSON.stringify(cache));
   const args = ["hook", "context", ...(host ? [host] : [])];
   return JSON.parse(execFileSync(process.execPath, [serverEntry, ...args], { env: { ...env, ...extraEnv }, input: stdin, encoding: "utf8" }));
 }
@@ -197,10 +199,10 @@ test("context: a newer minor or major version adds a yellow systemMessage and te
   const [major, minor] = version.split(".").map(Number);
   for (const latest of [`${major}.${minor + 1}.0`, `${major + 1}.0.0`]) {
     const out = contextOut({ checked: Date.now(), latest }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
-    expect(out.systemMessage).toBe(`\x1b[33mCheap Agent ${latest} is available (you have ${version}). Update: npx cheap-agent@latest\x1b[39m`);
+    expect(out.systemMessage).toBe(`\x1b[33mCheap Agent ${latest} is available (you have ${version}). Update: ${NPX}\x1b[39m`);
     expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
     expect(out.hookSpecificOutput.additionalContext).toContain(latest);
-    expect(out.hookSpecificOutput.additionalContext).toContain("npx cheap-agent@latest");
+    expect(out.hookSpecificOutput.additionalContext).toContain(NPX);
     expect(out.hookSpecificOutput.additionalContext).toContain(`${SESSION_CONTEXT} Cheap Agent ${latest} `);
   }
 });
@@ -210,9 +212,9 @@ test("context: in the desktop app the systemMessage has no colour but Claude is 
   const latest = `${major}.${minor + 1}.0`;
   const out = contextOut({ checked: Date.now(), latest }, { CLAUDE_CODE_ENTRYPOINT: "claude-desktop" });
   expect(out.systemMessage).not.toContain("\x1b[");
-  expect(out.systemMessage).toBe(`Cheap Agent ${latest} is available (you have ${version}). Update: npx cheap-agent@latest`);
+  expect(out.systemMessage).toBe(`Cheap Agent ${latest} is available (you have ${version}). Update: ${NPX}`);
   expect(out.hookSpecificOutput.additionalContext).toContain(latest);
-  expect(out.hookSpecificOutput.additionalContext).toContain("npx cheap-agent@latest");
+  expect(out.hookSpecificOutput.additionalContext).toContain(NPX);
 });
 
 test("context: a newer patch alone does not notify", () => {

@@ -8,6 +8,7 @@ import type { Provider } from "./credentials.js";
 import { baselinePermission } from "./permissions.js";
 import { gitBash, killProcessGroup, opencodePlatform } from "./platform.js";
 import { fullRoute, modelName, routeModels, type Route } from "./routing.js";
+import { customProviderConfig, customProviderId, requireCustomEndpoint } from "./custom-endpoint.js";
 
 const require = createRequire(import.meta.url);
 export const OPENCODE_PIN = (require("opencode-ai/package.json") as { version: string }).version;
@@ -142,6 +143,13 @@ function opencodeConfig(provider: Provider, route: Route) {
   // the key itself stays in OpenCode's own credential store; the config never names one
   const models = Object.fromEntries(routeModels(route).filter((m) => m.options).map((m) => [m.id, { options: m.options }]));
   const providerConfig: Record<string, unknown> = Object.keys(models).length ? { models } : {};
+  let providerId: string = provider.provider;
+  if (provider.provider === "custom") {
+    const endpoint = requireCustomEndpoint();
+    providerId = customProviderId(endpoint);
+    if (routeModels(route).some(m => m.providerID !== providerId)) throw new Error("Custom endpoint changed; restart the job after logging in and consenting again.");
+    Object.assign(providerConfig, customProviderConfig(endpoint, routeModels(route).map(m => m.id)));
+  }
   // Command Code is not in OpenCode's catalog: declare it as an OpenAI-compatible provider (the key still comes from the auth store)
   if (provider.provider === "commandcode") {
     Object.assign(providerConfig, COMMAND_CODE, {
@@ -152,8 +160,9 @@ function opencodeConfig(provider: Provider, route: Route) {
     $schema: "https://opencode.ai/config.json",
     // OpenCode otherwise sends title generation to its own default small model, i.e. another provider the user never chose;
     // the route's implement model is always an allowlisted one
-    small_model: modelName(route.implement),
-    provider: Object.keys(providerConfig).length ? { [provider.provider]: providerConfig } : {},
+    small_model: `${route.implement.providerID}/${route.implement.id}`,
+    enabled_providers: provider.provider === "custom" ? [providerId] : undefined,
+    provider: Object.keys(providerConfig).length ? { [providerId]: providerConfig } : {},
   };
   return JSON.stringify(config, null, 2) + "\n";
 }
@@ -240,6 +249,7 @@ function spawnServer(configDir: string, password: string) {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...(process.platform === "win32" ? { ComSpec: process.env.ComSpec || join(process.env.SystemRoot || "C:/Windows", "System32", "cmd.exe") } : {}),
         OPENCODE_SERVER_PASSWORD: password,
         OPENCODE_CONFIG_DIR: configDir,
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",

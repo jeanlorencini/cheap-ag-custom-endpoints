@@ -45,7 +45,8 @@ export function killProcessGroup(pid: number | undefined, signal: NodeJS.Signals
   if (!pid) return;
   if (process.platform === "win32") {
     // no process groups on Windows; taskkill walks the tree instead and ignores the signal
-    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    const taskkill = join(process.env.SystemRoot || "C:/Windows", "System32", "taskkill.exe");
+    spawnSync(taskkill, ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     return;
   }
   try {
