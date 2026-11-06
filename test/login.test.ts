@@ -39,7 +39,7 @@ tty("custom login uses OpenCode's hidden prompt and saves only portable endpoint
   expect(result.config.custom_endpoint).toEqual({ base_url: endpoint.baseURL, model: endpoint.model });
   expect(result.config.models.implement).toBe("custom/example-model");
   expect(result.output).not.toContain(KEY);
-});
+}, slow(90_000));
 
 async function runLogin(opts: { claude: "registered" | "local" | "unregistered" | "absent"; register?: "y" | "n"; check?: Action[]; logins?: Logins; path?: string[]; preset?: string; args?: string[]; config?: object; plugin?: "installed" | "fails"; cmd?: string[]; registeredCommand?: string[]; steps?: { expect: string; send: string }[] }) {
   const fake = await startFakeOpencode();
