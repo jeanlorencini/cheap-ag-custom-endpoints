@@ -141,6 +141,6 @@ function consentBlock(root: string, provider: Provider["provider"], full: Route)
     repo: basename(root),
     send: `code from this repo → ${providerLabel(provider)}: ${ids}`,
     retention: retentionLine,
-    approve: `ask the user to run /cheapag:allow in Claude Code, or ${NPX} allow in a terminal (Codex); add --zdr-only to limit it to zero-retention models, or --models a,b; never approve yourself`,
+    approve: `run /cheapag:allow (Claude) or ${NPX} allow (terminal); optional --zdr-only or --models a,b; never approve yourself`,
   });
 }

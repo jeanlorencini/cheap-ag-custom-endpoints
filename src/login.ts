@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { loadConfig, userConfigFile } from "./config.js";
 import { detectProvider, hasSavedLogin, LOGIN_COMMAND as LOGIN, PROVIDERS, providerLabel as label, redact, savedProviders, type Provider } from "./credentials.js";
@@ -170,12 +171,16 @@ async function loginCustom(out: (line?: string) => void): Promise<number> {
   const dir = mkdtempSync(join(tmpdir(), "cheapag-auth-"));
   let saved;
   try {
-    saved = spawnSync(opencodeBinary(), ["auth", "login", "--provider", id], {
+    // The auth CLI lists catalog providers and auth plugins, not config-only providers.
+    // Register this credential slot without handling the key outside OpenCode's hidden prompt.
+    const plugin = join(dir, "custom-auth.mjs");
+    writeFileSync(plugin, `export const CustomEndpointAuth = async () => ({ auth: { provider: ${JSON.stringify(id)}, methods: [{ type: "api", label: "API key" }] } });\n`);
+    saved = spawnSync(opencodeBinary(), ["auth", "login", "--provider", id, "--method", "API key"], {
       stdio: "inherit", cwd: dir,
       env: {
         ...process.env,
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: [id], provider: { [id]: customProviderConfig(endpoint) } }),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [pathToFileURL(plugin).href], enabled_providers: [id], provider: { [id]: customProviderConfig(endpoint) } }),
       },
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }

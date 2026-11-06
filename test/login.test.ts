@@ -29,11 +29,11 @@ tty("custom login uses OpenCode's hidden prompt and saves only portable endpoint
       { expect: "Provider", send: "5\r" },
       { expect: "EndpointbaseURL", send: endpoint.baseURL + "\r" },
       { expect: "ModelID", send: endpoint.model + "\r" },
-      { expect: "EnteryourAPIkey", send: KEY + "\r" },
+      { expect: "APIkey", send: KEY + "\r" },
       { expect: "Y/n", send: "n\r" },
     ],
   });
-  expect(result.exit).toBe("EXIT 0");
+  expect(result.exit, result.output.replaceAll(KEY, "[redacted]").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").slice(-3000)).toBe("EXIT 0");
   expect(result.saved).toContain(customProviderId(endpoint));
   expect(result.config.provider).toBe("custom");
   expect(result.config.custom_endpoint).toEqual({ base_url: endpoint.baseURL, model: endpoint.model });
@@ -332,11 +332,11 @@ test("login refuses a non-interactive stdin instead of hanging", async () => {
   expect(r.stdout).toBe("✗ npx -y github:jeanlorencini/cheap-ag-custom-endpoints#main login needs an interactive terminal (the key is typed into a hidden prompt)\n");
 });
 
-tty("re-running login adds a provider; the earlier one keeps precedence and that is said", async () => {
+tty("re-running login explicitly selects the newly chosen provider", async () => {
   const r = await runLogin({ claude: "registered", logins: { "opencode-go": "g" } });
   expect(r.exit).toBe("EXIT 0");
   expect(r.output).toContain("Currently using: OpenCode Go.");
-  expect(r.output).toContain("Note: OpenCode Go is also saved and is used first.");
+  expect(r.config.provider).toBe("openrouter");
   expect(r.saved.sort()).toEqual(["opencode-go", "openrouter"]);
 }, slow(90_000));
 
